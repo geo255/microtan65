@@ -57,14 +57,14 @@ static uint8_t border_top = 0;
 static uint8_t border_right = 0;
 static uint8_t border_bottom = 0;
 static uint8_t gpu_reg[NUM_GPU_REGISTERS];
-static uint8_t gpu_pixels[NUM_GPU_PLANES][DISPLAY_WIDTH][DISPLAY_HEIGHT];
+static uint8_t gpu_pixels[DISPLAY_WIDTH][DISPLAY_HEIGHT];
 static uint8_t *gpu_stamp_table[MAX_STAMPS];
 static sprite_t gpu_sprite_table[MAX_SPRITES];
 static uint8_t palette_red[256];
 static uint8_t palette_green[256];
 static uint8_t palette_blue[256];
 
-static display_hires_mode_t hires_mode = DISPLAY_HIRES_MODE_EXTENDED;
+static display_hires_mode_t hires_mode = DISPLAY_HIRES_MODE_NONE;
 static bool display_updated = true;
 
 static uint8_t main_display_read_callback(uint16_t address)
