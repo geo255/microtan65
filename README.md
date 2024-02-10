@@ -18,11 +18,12 @@ Emulates a Microtan 65 system with the following specification:
 * Finish the GPU
 
 ## BUILDING:
-Install libraries:
+Install libraries (Ubuntu):
 ```
-sudo apt install libsdl2-dev libsdl2-2.0-0
-sudo apt install libsdl2-image-dev libsdl2-mixer-dev
-````
+sudo apt update
+sudo apt install gcc make
+sudo apt install libsdl2-dev libsdl2-2.0-0 libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
+```
 
 Build:
 ```
