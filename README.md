@@ -13,6 +13,7 @@ Emulates a Microtan 65 system with the following specification:
 
 ## TODO:
 * Emulation of the 2xAY8910 soundboard
+* Emulation of the serial interface
 * Support for more file formats (Zillion hex and Intel hex)
 * A menu
 * Finish the GPU
