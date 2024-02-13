@@ -263,11 +263,6 @@ uint8_t via_6522_read_callback(uint16_t address)
         if ((address >= address_table[i]) && (address <= (address_table[i] + 15)))
         {
             rv = via_6522_read_register(i, address - address_table[i]);
-
-            if ((address & 0x0f) < 4)
-            {
-                address_print(address);
-            }
         }
     }
 
@@ -281,11 +276,6 @@ void via_6522_write_callback(uint16_t address, uint8_t value)
         if ((address >= address_table[i]) && (address <= (address_table[i] + 15)))
         {
             via_6522_write_register(i, address - address_table[i], value);
-
-            if ((address & 0x0f) < 4)
-            {
-                address_print(address);
-            }
         }
     }
 }
