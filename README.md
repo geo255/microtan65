@@ -1,9 +1,10 @@
 # microtan65
 Tangerine Microtan 65 emulator
 
-Emulates a Microtan 65 system with the following specification:
+Emulates a Microtan 65 system with the following specifications:
 * Microtan 65 system board with chunky graphics and lowercase character options
 * Tanex with 7k RAM, 2x6522, XBUG and BASIC EPROMS (no serial I/O yet)
+* 64k RAM board
 * Hex keypad
 * ASCII keyboard
 * 8-way Joystick (via cursor keys) connected to 6522
@@ -57,7 +58,7 @@ F2 emulates the Tangerine Hex Keypad
 F3 emulated the ASCII keyboard
 F5 resets the CPU
 
-## GAME KEYS
+## GAME KEYS:
 ### Adventure
 * Text input
 ### Astro Fighter
