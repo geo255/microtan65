@@ -781,6 +781,7 @@ printf("Check collisions for %02x\r\n", id);
 			}
 		}
 		next_sprite:
+    continue;
     }
 	gpu_reg[0x1f] = 0;
 	gpu_reg[0x21] = number_of_collisions;

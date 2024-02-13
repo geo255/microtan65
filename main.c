@@ -206,7 +206,7 @@ int main(int argc, char *argv[])
 
             case SDL_KEYDOWN:
                 {
-                    SDL_KeyCode keycode = event.key.keysym.sym;
+                    SDL_Keycode keycode = event.key.keysym.sym;
 
                     if (keycode == SDLK_F1)
                     {
