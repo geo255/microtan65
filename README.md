@@ -12,6 +12,7 @@ Emulates a Microtan 65 system with the following specification:
 * My .m65 file format
 
 ## TODO:
+* Complete hex keypad emulation
 * Emulation of the 2xAY8910 soundboard
 * Emulation of the serial interface
 * Support for more file formats (Zillion hex and Intel hex)
@@ -52,7 +53,53 @@ CAPS yourself.
 The numeric keypad "ENTER" key is used as the "LINEFEED" key on the Microtan keyboard.
 
 F1 displays a brief help window
+F2 emulates the Tangerine Hex Keypad
+F3 emulated the ASCII keyboard
+F5 resets the CPU
 
+## GAME KEYS
+### Adventure
+* Text input
+### Astro Fighter
+* Space: Fire
+* Cursor keys: Move
+### Berzerk
+* Space: Fire
+* Cursor keys: Move
+### Defender
+* Left ctrl: Thrust
+* Space: Fire
+* Cursor up/down: Move
+* Cursor Right: Reverse
+* Cursor Left: Smart bomb
+### Gobbler
+* Not yet working: hex keypad not fully emulated
+### Hangman
+* Text input
+### Hells Bells
+* Left ctrl: Jump
+* Cursor left/right: Move
+### Invaders
+* Left shift: Start game
+* Space: Fire
+* Cursor keys: Move
+### Lunar Lander
+* Text input
+### Moon Cresta
+* Left ctrl: Start
+* Space: Fire
+* Cursor keys: Move
+### Moon Rescue
+* Left ctrl: Start/Launch lunar module
+* Space: Thrust/Fire
+* Cursor keys: Move
+### Othello
+* Text input
+### Slot Machine
+* Space: Start
+* 1..3: Nudge/hold reel
+### Space Rocks
+* Not yet working: hex keypad not fully emulated
 ## FURTHER INFORMATION:
 Go to my website at https://geoff.org.uk/microtan/ for more Microtan 65 information
 and documentation.
