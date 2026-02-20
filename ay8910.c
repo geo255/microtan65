@@ -1,851 +1,415 @@
-#include <SDL.h>
 #include "ay8910.h"
+#include <SDL.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
-#define NUM_PLAY_NOTIFICATIONS      4
+/* ---------------------------------------------------------------------------
+ * AY-3-8910 Programmable Sound Generator Emulation
+ * --------------------------------------------------------------------------*/
 
-#define PLAYBACK_FREQUENCY          22050 //Hz
-#define BUFFER_TIME                 100 //mS
-#define BUFFER_BYTES                (PLAYBACK_FREQUENCY*BUFFER_TIME/1000)
-#define WRITE_TIME                  50 //mS
-#define WRITE_BYTES                 (PLAYBACK_FREQUENCY*WRITE_TIME/1000)
-#define UPDATES_PER_SEC             (1000*NUM_PLAY_NOTIFICATIONS/BUFFER_TIME)
-#define UPDATES_PER_SEC_DX3         (1000*2/BUFFER_TIME)
+/* ---------------------------------------------------------------------------
+ * Configuration
+ * --------------------------------------------------------------------------*/
+#define PLAYBACK_FREQUENCY 22050 /* Hz - mono, 8-bit unsigned */
+#define MAX_DEVICES        2     /* Microtan 65 has two AY8910s */
 
-static LPDIRECTSOUND lpDS = NULL;
-static LPDIRECTSOUNDBUFFER lpDSBStreamBuffer = NULL;
-static LPDIRECTSOUNDNOTIFY lpDirectSoundNotify = NULL;
-static WAVEFORMATEX WaveFormat;
-static DSBUFFERDESC dsbd;
-static HANDLE hNotifyEvent[2];
-static DWORD dwNextWriteOffset = 0;
-static BOOL bClosing = FALSE;
-static DWORD dwNotifySize;
-static HANDLE hThread;
+/* SDL audio callback buffer size.  22050 Hz / 20 updates/sec = 1102 samples.
+ * Round up to a power-of-two friendly size. */
+#define AUDIO_BUF_SIZE 2048
 
-static int AYSoundRate;     /* Output rate (Hz) */
-static int AYBufSize;       /* size of sound buffer, in samples */
-static int AYNumChips;      /* total # of PSG's emulated */
-static AY8910 *AYPSG;       /* array of PSG's */
-static HWND hWinMain = NULL;
-BOOL AY8910_Initialised = FALSE;
-static BOOL bCantInitialise = FALSE;
-static BOOL bThreadRunning = FALSE;
-static BOOL bUseNotify = FALSE;
+/* ---------------------------------------------------------------------------
+ * Module state
+ * --------------------------------------------------------------------------*/
+static ay8910_t chips[MAX_DEVICES];
+static bool ay8910_initialised = false;
+static SDL_AudioDeviceID audio_device = 0;
+static uint16_t address_table[MAX_DEVICES] = {0xbc00, 0xbc02};
+static uint8_t ay8910_memory_mapped_registers[MAX_DEVICES][2];
 
-/*
-** allocate buffers and clear registers for one of the emulated
-** AY8910 chips.
-*/
-static int _AYInitChip(int num, SAMPLE *buf)
-{
-    AY8910 *PSG = &(AYPSG[num]);
-    PSG->UserBuffer = 0;
+/* Each chip has its own output buffer; the SDL callback mixes them together. */
+static uint8_t chip_buffer[MAX_DEVICES][AUDIO_BUF_SIZE];
 
-    if (buf)
-    {
-        PSG->Buf = buf;
-        PSG->UserBuffer = 1;
+/* ---------------------------------------------------------------------------
+ * Envelope waveform table  (16 shapes x 32 steps)
+ * --------------------------------------------------------------------------*/
+static const uint8_t envelope_forms[16][32] =
+  {
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+
+/* ---------------------------------------------------------------------------
+ * Per-chip sample generation
+ * --------------------------------------------------------------------------*/
+static void update_chip(int num, int num_samples) {
+  ay8910_t* psg = &chips[num];
+  int x;
+  int c0, c1, l0, l1, l2;
+  uint8_t* lpb;
+
+  x = psg->regs[AY_AFINE] + ((unsigned)(psg->regs[AY_ACOARSE] & 0x0F) << 8);
+  psg->inc_0 = x ? (int)((long)AY8910_CLOCK / PLAYBACK_FREQUENCY * 4 / x) : 0;
+
+  x = psg->regs[AY_BFINE] + ((unsigned)(psg->regs[AY_BCOARSE] & 0x0F) << 8);
+  psg->inc_1 = x ? (int)((long)AY8910_CLOCK / PLAYBACK_FREQUENCY * 4 / x) : 0;
+
+  x = psg->regs[AY_CFINE] + ((unsigned)(psg->regs[AY_CCOARSE] & 0x0F) << 8);
+  psg->inc_2 = x ? (int)((long)AY8910_CLOCK / PLAYBACK_FREQUENCY * 4 / x) : 0;
+
+  x = psg->regs[AY_NOISEPER] & 0x1F;
+  psg->inc_noise = (int)((long)AY8910_CLOCK / PLAYBACK_FREQUENCY * 4 / (x ? x : 1));
+
+  x = psg->regs[AY_EFINE] + ((unsigned)psg->regs[AY_ECOARSE] << 8);
+  psg->inc_env = x ? (int)((long)AY8910_CLOCK / PLAYBACK_FREQUENCY * 4 / x * num_samples) : 0;
+
+  /* Sample the envelope table once per update call */
+  psg->envelope = envelope_forms[psg->regs[AY_ESHAPE]][(psg->count_env >> 16) & 0x1F];
+
+  if ((psg->count_env += psg->inc_env) & 0xFFE00000) {
+    switch (psg->regs[AY_ESHAPE]) {
+      case 8:
+      case 10:
+      case 12:
+      case 14:
+        psg->count_env -= 0x200000;
+        break;
+      default:
+        psg->count_env = 0x100000;
+        psg->inc_env = 0;
+        break;
     }
-    else
-    {
-        if ((PSG->Buf = (SAMPLE *)malloc(AYBufSize)) == NULL)
-        {
-            return -1;
-        }
+  }
+
+  /* Resolve volumes: bit 4 of VOLx selects envelope vs. fixed */
+  psg->volume_0 = (psg->regs[AY_AVOL] < 16) ? psg->regs[AY_AVOL] : psg->envelope;
+  psg->volume_1 = (psg->regs[AY_BVOL] < 16) ? psg->regs[AY_BVOL] : psg->envelope;
+  psg->volume_2 = (psg->regs[AY_CVOL] < 16) ? psg->regs[AY_CVOL] : psg->envelope;
+
+  /* Noise volume = average of the channels that have noise enabled */
+  psg->volume_noise = (((psg->regs[AY_ENABLE] & 010) ? 0 : psg->volume_0) +
+                       ((psg->regs[AY_ENABLE] & 020) ? 0 : psg->volume_1) +
+                       ((psg->regs[AY_ENABLE] & 040) ? 0 : psg->volume_2)) /
+                      2;
+
+  /* Mask out tone channels that are disabled */
+  psg->volume_0 = (psg->regs[AY_ENABLE] & 001) ? 0 : psg->volume_0;
+  psg->volume_1 = (psg->regs[AY_ENABLE] & 002) ? 0 : psg->volume_1;
+  psg->volume_2 = (psg->regs[AY_ENABLE] & 004) ? 0 : psg->volume_2;
+
+  lpb = psg->buffer;
+
+  for (int i = 0; i < num_samples; i++) {
+    /* --- Channel A anti-aliased square wave --- */
+    c0 = psg->counter_0;
+    c1 = psg->counter_0 + psg->inc_0;
+    l0 = ((c0 & 0x8000) ? -16 : 16);
+
+    if ((c0 ^ c1) & 0x8000) {
+      l0 = l0 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / psg->inc_0;
     }
 
-    PSG->Port[0] = PSG->Port[1] = NULL;
-    AYResetChip(num);
-    return 0;
+    psg->counter_0 = c1 & 0xFFFF;
+
+    /* --- Channel B --- */
+    c0 = psg->counter_1;
+    c1 = psg->counter_1 + psg->inc_1;
+    l1 = ((c0 & 0x8000) ? -16 : 16);
+
+    if ((c0 ^ c1) & 0x8000) {
+      l1 = l1 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / psg->inc_1;
+    }
+
+    psg->counter_1 = c1 & 0xFFFF;
+
+    /* --- Channel C --- */
+    c0 = psg->counter_2;
+    c1 = psg->counter_2 + psg->inc_2;
+    l2 = ((c0 & 0x8000) ? -16 : 16);
+
+    if ((c0 ^ c1) & 0x8000) {
+      l2 = l2 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / psg->inc_2;
+    }
+
+    psg->counter_2 = c1 & 0xFFFF;
+
+    /* --- Noise LFSR --- */
+    psg->count_noise &= 0xFFFF;
+
+    if ((psg->count_noise += psg->inc_noise) & 0xFFFF0000) {
+      psg->state_noise =
+        ((psg->noise_gen <<= 1)& 0x80000000
+           ? psg->noise_gen ^= 0x00040001
+           : psg->noise_gen) &
+        1;
+    }
+
+    /* --- Mix and write sample --- */
+    *lpb++ = (uint8_t)AUDIO_CONV(
+      (l0 * psg->volume_0 + l1 * psg->volume_1 + l2 * psg->volume_2) / 6 +
+      (psg->state_noise ? psg->volume_noise : -psg->volume_noise));
+  }
 }
 
-/*
-** release storage for a chip
-*/
-static void _AYFreeChip(int num)
-{
-    AY8910 *PSG = &(AYPSG[num]);
+/* ---------------------------------------------------------------------------
+ * SDL audio callback  - called from SDL's audio thread.
+ * Generates fresh samples for both chips, then averages them into the
+ * output buffer.
+ * --------------------------------------------------------------------------*/
+static void audio_callback(void* userdata, uint8_t* stream, int len) {
+  (void)userdata;
 
-    if (PSG->Buf && !PSG->UserBuffer)
-    {
-        free(PSG->Buf);
-    }
+  if (!ay8910_initialised) {
+    memset(stream, 128, len); /* silence */
+    return;
+  }
 
-    PSG->Buf = NULL;
+  /* len is in bytes; for 8-bit mono that equals number of samples.
+   * Clamp to our internal buffer size just in case SDL asks for more. */
+  int num_samples = (len < AUDIO_BUF_SIZE) ? len : AUDIO_BUF_SIZE;
+
+  /* Generate samples for each chip */
+  update_chip(0, num_samples);
+  update_chip(1, num_samples);
+
+  /* Mix: average the two chips into the output stream */
+  for (int i = 0; i < num_samples; i++) {
+    stream[i] = (uint8_t)(((unsigned)chip_buffer[0][i] + (unsigned)chip_buffer[1][i]) / 2);
+  }
 }
 
-/*
-** Initialize AY8910 emulator(s).
-**
-** 'num' is the number of virtual AY8910's to allocate
-** 'rate' is sampling rate and 'bufsiz' is the size of the
-** buffer that should be updated at each interval
-*/
-int AYInit(int num, int rate, int bufsiz, ...)
-{
-    int i;
-    va_list ap;
-    SAMPLE *userbuffer;
-    int moreargs = 1;
-    va_start(ap, bufsiz);
+/* ---------------------------------------------------------------------------
+ * Public API
+ * --------------------------------------------------------------------------*/
 
-    if (AYPSG)
-    {
-        return (-1);    /* duplicate init. */
+void ay8910_write_callback(uint16_t address, uint8_t value) {
+  int n = -1;
+  int r = 0;
+
+  if (!ay8910_initialised) {
+    return;
+  }
+
+  for (int i = 0; (i < MAX_DEVICES) && (n < 0); i++) {
+    if (address == address_table[i]) {
+      ay8910_memory_mapped_registers[i][0] = value;
+      return;
+    } else if (address == (address_table[i] + 1)) {
+      ay8910_memory_mapped_registers[i][1] = value;
+      n = i;
+      r = ay8910_memory_mapped_registers[i][0] & 0x0f;
     }
+  }
 
-    AYNumChips = num;
-    AYSoundRate = rate;
-    AYBufSize = bufsiz;
-    AYPSG = (AY8910 *)malloc(sizeof(AY8910) * AYNumChips);
+  if (n < 0 || n >= MAX_DEVICES)
+    return;
 
-    if (AYPSG == NULL)
-    {
-        return (0);
-    }
+  /* Lock audio to prevent conflicts with audio callback */
+  if (audio_device != 0)
+    SDL_LockAudioDevice(audio_device);
 
-    for (i = 0 ; i < AYNumChips; i++)
-    {
-        if (moreargs)
-        {
-            userbuffer = va_arg(ap, SAMPLE *);
-        }
+  ay8910_t* psg = &chips[n];
+  psg->regs[r] = value;
 
-        if (userbuffer == NULL)
-        {
-            moreargs = 0;
-        }
-
-        userbuffer = NULL;
-
-        if (_AYInitChip(i, userbuffer) < 0)
-        {
-            int j;
-
-            for (j = 0 ; j < i ; j ++)
-            {
-                _AYFreeChip(j);
-            }
-
-            return (-1);
-        }
-    }
-
-    return (0);
-}
-
-void AYShutdown()
-{
-    int i;
-
-    if (!AYPSG)
-    {
-        return;
-    }
-
-    for (i = 0 ; i < AYNumChips ; i++)
-    {
-        _AYFreeChip(i);
-    }
-
-    free(AYPSG);
-    AYPSG = NULL;
-    AYSoundRate = AYBufSize = 0;
-}
-
-/*
-** reset all chip registers.
-*/
-void AYResetChip(int num)
-{
-    int i;
-    AY8910 *PSG = &(AYPSG[num]);
-
-    if (!AY8910_Initialised)
-    {
-        return;
-    }
-
-    memset(PSG->Buf, '\0', AYBufSize);
-
-    /* initialize hardware registers */
-    for (i = 0; i < 16; i++)
-    {
-        PSG->Regs[i] = AUDIO_CONV(0);
-    }
-
-    /*
-        PSG->Regs[AY_ENABLE] = 077;
-        PSG->Regs[AY_AVOL] = 8;
-        PSG->Regs[AY_BVOL] = 8;
-        PSG->Regs[AY_CVOL] = 8;
-    */
-    PSG->NoiseGen = 1;
-    PSG->Envelope = 15;
-    PSG->StateNoise = 0;
-    PSG->Incr0 = PSG->Incr1 = PSG->Incr2 = PSG->Increnv = PSG->Incrnoise = 0;
-
-    for (i = 0; i < 16; i++)
-    {
-        AYWriteReg(num, i, 0);
-    }
-}
-
-static unsigned char _AYEnvForms[16][32] =
-{
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15
-    },
-    {
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
-        15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0
-    },
-    {
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-    }
-};
-
-
-/* write a register on AY8910 chip number 'n' */
-void AYWriteReg(int n, int r, int v)
-{
-    AY8910 *PSG = &(AYPSG[n]);
-
-    if ((!AY8910_Initialised) && (!bCantInitialise))
-    {
-        AY8910_Init(hWinMain);
-    }
-
-    if (!AY8910_Initialised)
-    {
-        return;
-    }
-
-    PSG->Regs[r] = v;
-
-    switch (r)
-    {
+  switch (r) {
     case AY_AVOL:
     case AY_BVOL:
     case AY_CVOL:
-        PSG->Regs[r] &= 0x1F;   /* mask volume */
-        break;
-
-    case AY_EFINE:
-    case AY_ECOARSE:
-        /* fall through */
-        break;
+      psg->regs[r] &= 0x1F; /* volume is 5 bits */
+      break;
 
     case AY_ESHAPE:
-        PSG->Countenv = 0;
-        PSG->Regs[AY_ESHAPE] &= 0xF;
-        break;
+      psg->count_env = 0; /* writing shape resets envelope counter */
+      psg->regs[AY_ESHAPE] &= 0x0F;
+      break;
 
     case AY_PORTA:
-        if (PSG->Port[0])
-        {
-            (PSG->Port[0])(PSG, AY_PORTA, 1, (byte)v);
-        }
-
-        break;
+      if (psg->port[0])
+        psg->port[0](psg, AY_PORTA, 1, value);
+      break;
 
     case AY_PORTB:
-        if (PSG->Port[1])
-        {
-            (PSG->Port[1])(PSG, AY_PORTB, 1, (byte)v);
-        }
+      if (psg->port[1])
+        psg->port[1](psg, AY_PORTB, 1, value);
+      break;
+  }
 
-        break;
-    }
+  if (audio_device != 0)
+    SDL_UnlockAudioDevice(audio_device);
 }
 
-byte AYReadReg(int n, int r)
-{
-    AY8910 *PSG = &(AYPSG[n]);
+uint8_t ay8910_read_callback(uint16_t address) {
+  int n = -1;
+  int r = 0;
 
-    if (!AY8910_Initialised)
-    {
-        return (0xff);
+  if (!ay8910_initialised) {
+    return 0xff;
+  }
+
+  for (int i = 0; (i < MAX_DEVICES) && (n < 0); i++) {
+    if (address == address_table[i]) {
+      return ay8910_memory_mapped_registers[i][0];
+    } else if (address == (address_table[i] + 1)) {
+      n = i;
+      r = ay8910_memory_mapped_registers[i][0] & 0x0f;
     }
+  }
 
-    switch (r)
-    {
+  if (n < 0 || n >= MAX_DEVICES)
+    return 0xff;
+
+  /* Lock audio to prevent conflicts with audio callback */
+  if (audio_device != 0)
+    SDL_LockAudioDevice(audio_device);
+
+  ay8910_t* psg = &chips[n];
+
+  switch (r) {
     case AY_PORTA:
-        if (PSG->Port[0])
-        {
-            (PSG->Port[0])(PSG, AY_PORTA, 0, 0);
-        }
-
-        break;
+      if (psg->port[0])
+        psg->port[0](psg, AY_PORTA, 0, 0);
+      break;
 
     case AY_PORTB:
-        if (PSG->Port[1])
-        {
-            (PSG->Port[1])(PSG, AY_PORTB, 0, 0);
-        }
+      if (psg->port[1])
+        psg->port[1](psg, AY_PORTB, 0, 0);
+      break;
+  }
 
-        break;
-    }
+  uint8_t result = psg->regs[r];
 
-    return PSG->Regs[r];
+  if (audio_device != 0)
+    SDL_UnlockAudioDevice(audio_device);
+
+  return result;
 }
 
-static void _AYUpdateChip(int num, DWORD pdwBytes)
-{
-    AY8910 *PSG = &(AYPSG[num]);
-    int v = 0, x;
-    int c0, c1, l0, l1, l2;
-    DWORD dw;
-    BYTE *lpb;
-    x = (PSG->Regs[AY_AFINE] + ((unsigned)(PSG->Regs[AY_ACOARSE] & 0xF) << 8));
-    PSG->Incr0 = x ? AY8910_CLOCK / AYSoundRate * 4 / x : 0;
-    x = (PSG->Regs[AY_BFINE] + ((unsigned)(PSG->Regs[AY_BCOARSE] & 0xF) << 8));
-    PSG->Incr1 = x ? AY8910_CLOCK / AYSoundRate * 4 / x : 0;
-    x = (PSG->Regs[AY_CFINE] + ((unsigned)(PSG->Regs[AY_CCOARSE] & 0xF) << 8));
-    PSG->Incr2 = x ? AY8910_CLOCK / AYSoundRate * 4 / x : 0;
-    x = PSG->Regs[AY_NOISEPER] & 0x1F;
-    PSG->Incrnoise = AY8910_CLOCK / AYSoundRate * 4 / (x ? x : 1);
-    x = (PSG->Regs[AY_EFINE] + ((unsigned)PSG->Regs[AY_ECOARSE] << 8));
-    PSG->Increnv = x ? AY8910_CLOCK / AYSoundRate * 4 / x * pdwBytes : 0;
-    PSG->Envelope = _AYEnvForms[PSG->Regs[AY_ESHAPE]][(PSG->Countenv >> 16) & 0x1F];
+void ay8910_set_port_handler(int n, int port, ay8910_port_handler_t func) {
+  int idx = port - AY_PORTA;
 
-    if ((PSG->Countenv += PSG->Increnv) & 0xFFE00000)
-    {
-        switch (PSG->Regs[AY_ESHAPE])
-        {
-        case 8:
-        case 10:
-        case 12:
-        case 14:
-            PSG->Countenv -= 0x200000;
-            break;
+  if (n < 0 || n >= MAX_DEVICES || idx < 0 || idx > 1)
+    return;
 
-        default:
-            PSG->Countenv = 0x100000;
-            PSG->Increnv = 0;
-        }
-    }
-
-    PSG->Vol0 = (PSG->Regs[AY_AVOL] < 16) ? PSG->Regs[AY_AVOL] : PSG->Envelope;
-    PSG->Vol1 = (PSG->Regs[AY_BVOL] < 16) ? PSG->Regs[AY_BVOL] : PSG->Envelope;
-    PSG->Vol2 = (PSG->Regs[AY_CVOL] < 16) ? PSG->Regs[AY_CVOL] : PSG->Envelope;
-    PSG->Volnoise = (
-                        ((PSG->Regs[AY_ENABLE] & 010) ? 0 : PSG->Vol0) +
-                        ((PSG->Regs[AY_ENABLE] & 020) ? 0 : PSG->Vol1) +
-                        ((PSG->Regs[AY_ENABLE] & 040) ? 0 : PSG->Vol2)) / 2;
-    PSG->Vol0 = (PSG->Regs[AY_ENABLE] & 001) ? 0 : PSG->Vol0;
-    PSG->Vol1 = (PSG->Regs[AY_ENABLE] & 002) ? 0 : PSG->Vol1;
-    PSG->Vol2 = (PSG->Regs[AY_ENABLE] & 004) ? 0 : PSG->Vol2;
-    lpb = PSG->Buf;
-
-    for (dw = 0; dw < pdwBytes; ++dw)
-    {
-        /*
-        ** These strange tricks are needed for getting rid
-        ** of nasty interferences between sampling frequency
-        ** and "rectangular sound" (which is also the output
-        ** of real AY-3-8910) we produce.
-        */
-        c0 = PSG->Counter0;
-        c1 = PSG->Counter0 + PSG->Incr0;
-        l0 = ((c0 & 0x8000) ? -16 : 16);
-
-        if ((c0 ^ c1) & 0x8000)
-        {
-            l0 = l0 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / PSG->Incr0;
-        }
-
-        PSG->Counter0 = c1 & 0xFFFF;
-        c0 = PSG->Counter1;
-        c1 = PSG->Counter1 + PSG->Incr1;
-        l1 = ((c0 & 0x8000) ? -16 : 16);
-
-        if ((c0 ^ c1) & 0x8000)
-        {
-            l1 = l1 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / PSG->Incr1;
-        }
-
-        PSG->Counter1 = c1 & 0xFFFF;
-        c0 = PSG->Counter2;
-        c1 = PSG->Counter2 + PSG->Incr2;
-        l2 = ((c0 & 0x8000) ? -16 : 16);
-
-        if ((c0 ^ c1) & 0x8000)
-        {
-            l2 = l2 * (0x8000 - (c0 & 0x7FFF) - (c1 & 0x7FFF)) / PSG->Incr2;
-        }
-
-        PSG->Counter2 = c1 & 0xFFFF;
-        PSG->Countnoise &= 0xFFFF;
-
-        if ((PSG->Countnoise += PSG->Incrnoise) & 0xFFFF0000)
-        {
-            /*
-            ** The following code is a random bit generator :)
-            */
-            PSG->StateNoise =
-                ((PSG->NoiseGen <<= 1) & 0x80000000
-                 ? PSG->NoiseGen ^= 0x00040001 : PSG->NoiseGen) & 1;
-        }
-
-        *lpb++ = AUDIO_CONV(
-                     (l0 * PSG->Vol0 + l1 * PSG->Vol1 + l2 * PSG->Vol2) / 6 +
-                     (PSG->StateNoise ? PSG->Volnoise : -PSG->Volnoise));
-    }
+  chips[n].port[idx] = func;
 }
 
-/*
-** called to update all chips
-*/
-void AYUpdate(DWORD pdwBytes)
-{
-    int i;
+static void reset_chip(int num) {
+  ay8910_t* psg = &chips[num];
 
-    for (i = 0 ; i < AYNumChips; i++)
-    {
-        _AYUpdateChip(i, pdwBytes);
-    }
+  memset(psg->buffer, 0, AUDIO_BUF_SIZE);
+  memset(psg->regs, 0, sizeof(psg->regs));
+
+  psg->noise_gen = 1;
+  psg->envelope = 15;
+  psg->state_noise = 0;
+
+  psg->inc_0 = psg->inc_1 = psg->inc_2 = 0;
+  psg->inc_env = psg->inc_noise = 0;
+  psg->counter_0 = psg->counter_1 = psg->counter_2 = 0;
+  psg->count_env = psg->count_noise = 0;
+  psg->volume_0 = psg->volume_1 = psg->volume_2 = 0;
+  psg->volume_noise = 0;
 }
 
+int ay8910_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)address;
+  (void)param;
+  (void)identifier;
 
-/*
-** return the buffer into which AYUpdate() has just written it's sample
-** data
-*/
-SAMPLE *AYBuffer(int n)
-{
-    return AYPSG[n].Buf;
+  if (ay8910_initialised)
+    return 0; /* already open */
+
+  /* Point each chip's buffer at its slot in chip_buffer */
+  for (int i = 0; i < MAX_DEVICES; i++) {
+    chips[i].buffer = chip_buffer[i];
+    chips[i].port[0] = chips[i].port[1] = NULL;
+    reset_chip(i);
+  }
+
+  /* For WSLg support - point PulseAudio to WSLg server if it exists */
+  const char* wslg_pulse = "/mnt/wslg/PulseServer";
+  struct stat st;
+  if (stat(wslg_pulse, &st) == 0 && S_ISSOCK(st.st_mode)) {
+    char pulse_server[256];
+    snprintf(pulse_server, sizeof(pulse_server), "unix:%s", wslg_pulse);
+    setenv("PULSE_SERVER", pulse_server, 0); /* don't override if already set */
+  }
+
+  /* Initialize SDL audio subsystem if not already done */
+  if (SDL_WasInit(SDL_INIT_AUDIO) == 0) {
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+      printf("Warning: SDL_InitSubSystem(AUDIO) failed: %s\n", SDL_GetError());
+      printf("         AY8910 will run silently\n");
+      ay8910_initialised = true;
+      return 0;
+    }
+  }
+
+  /* Configure SDL audio: mono, 8-bit unsigned, 22050 Hz */
+  SDL_AudioSpec want, have;
+  SDL_zero(want);
+  want.freq = PLAYBACK_FREQUENCY;
+  want.format = AUDIO_U8;
+  want.channels = 1;
+  want.samples = AUDIO_BUF_SIZE;
+  want.callback = audio_callback;
+  want.userdata = NULL;
+
+  audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+  if (audio_device == 0) {
+    printf("Warning: SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
+    printf("         AY8910 will run silently (this is normal in WSL1 or headless environments)\n");
+    /* Continue anyway - emulator works without sound */
+  } else {
+    /* Start playback */
+    SDL_PauseAudioDevice(audio_device, 0);
+    printf("AY8910 audio initialized: %d Hz, %d-bit, %d channel(s)\n",
+           have.freq,
+           SDL_AUDIO_BITSIZE(have.format),
+           have.channels);
+  }
+
+  system_register_memory_mapped_device(0xbc00, 0xbc01, ay8910_read_callback, ay8910_write_callback, false);
+  system_register_memory_mapped_device(0xbc02, 0xbc03, ay8910_read_callback, ay8910_write_callback, false);
+
+  ay8910_initialised = true;
+  return 0;
 }
 
-void AYSetBuffer(int n, SAMPLE *buf)
-{
-    AYPSG[n].Buf = buf;
+void ay8910_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
+  (void)address;
+
+  if (!ay8910_initialised)
+    return;
+
+  reset_chip(0);
+  reset_chip(1);
 }
 
-/*
-** set a port handler function to be called when AYWriteReg() or AYReadReg()
-** is called for register AY_PORTA or AY_PORTB.
-**
-*/
-void AYSetPortHandler(int n, int port, ay8910_port_Handler func)
-{
-    port -= AY_PORTA;
-
-    if (port > 1 || port < 0)
-    {
-        return;
-    }
-
-    AYPSG[n].Port[port] = func;
-}
-
-
-
-/*
-** This thread is created when DirectX 5 or later is used
-*/
-DWORD AY8910_HandleNotifications(LPVOID lpvoid)
-{
-    DWORD hObject;
-    LPBYTE lpWrite1;
-    LPBYTE lpb;
-    SAMPLE *lpSample1;
-    SAMPLE *lpSample2;
-    DWORD dwWrite1 = 0;
-    LPBYTE lpWrite2;
-    DWORD dwWrite2 = 0;
-    HRESULT hResult;
-    DWORD n;
-    bThreadRunning = TRUE;
-    SetThreadPriority(hThread, THREAD_PRIORITY_HIGHEST);
-
-    while (((hObject = WaitForMultipleObjects(2, hNotifyEvent, FALSE, INFINITE)) != WAIT_FAILED) && (!bClosing))
-    {
-        switch (hObject - WAIT_OBJECT_0)
-        {
-        case 0:     // Move data into buffer
-            hResult = lpDSBStreamBuffer->lpVtbl->Lock(lpDSBStreamBuffer, dwNextWriteOffset, dwNotifySize, &lpWrite1, &dwWrite1, &lpWrite2, &dwWrite2, 0);
-
-            if (hResult != DS_OK)
-            {
-                bThreadRunning = FALSE;
-                return (1);
-            }
-
-            lpSample1 = AYBuffer(0);
-            lpSample2 = AYBuffer(1);
-
-            for (lpb = lpWrite1, n = 0; n < dwWrite1; n++)
-            {
-                *(lpb++) = (BYTE)(((WORD)(*lpSample1++) + (WORD)(*lpSample2++)) / 2);
-            }
-
-            for (lpb = lpWrite2, n = 0; n < dwWrite2; n++)
-            {
-                *(lpb++) = (BYTE)(((WORD)(*lpSample1++) + (WORD)(*lpSample2++)) / 2);
-            }
-
-            hResult = lpDSBStreamBuffer->lpVtbl->Unlock(lpDSBStreamBuffer, (LPVOID)lpWrite1, dwWrite1, (LPVOID)lpWrite2, dwWrite2);
-            dwNextWriteOffset += (dwWrite1 + dwWrite2);
-
-            if (dwNextWriteOffset >= dsbd.dwBufferBytes)
-            {
-                dwNextWriteOffset -= dsbd.dwBufferBytes;
-            }
-
-            AYUpdate(AYBufSize);
-            break;
-
-        case 1:     // Stop
-            bClosing = TRUE;
-            break;
-        }
-
-        if (bClosing)
-        {
-            break;
-        }
-    }
-
-    if (lpDirectSoundNotify)
-    {
-        lpDirectSoundNotify->lpVtbl->Release(lpDirectSoundNotify);
-    }
-
-    lpDirectSoundNotify = NULL;
-
-    if (lpDSBStreamBuffer)
-    {
-        lpDSBStreamBuffer->lpVtbl->Release(lpDSBStreamBuffer);
-    }
-
-    lpDSBStreamBuffer = NULL;
-    bThreadRunning = FALSE;
-    return (0);
-}
-
-
-/*
-** This thread is created when DirectX 4 or earlier is used
-*/
-DWORD AY8910_SoundThread(LPVOID lpvoid)
-{
-    LPBYTE lpWrite1;
-    register LPBYTE lpb;
-    register SAMPLE *lpSample1;
-    register SAMPLE *lpSample2;
-    DWORD dwWrite1 = 0;
-    HRESULT hResult;
-    register DWORD n;
-    DWORD dwPlay;
-    DWORD dwWrite;
-    bThreadRunning = TRUE;
-
-    while (!bClosing)
-    {
-        AYUpdate(AYBufSize);
-        lpSample1 = AYBuffer(0);
-        lpSample2 = AYBuffer(1);
-        n = dwWrite1;
-        SetThreadPriority(hThread, THREAD_PRIORITY_NORMAL);
-
-        while (TRUE)
-        {
-            lpDSBStreamBuffer->lpVtbl->GetCurrentPosition(lpDSBStreamBuffer, &dwPlay, &dwWrite);
-
-            if ((dwNextWriteOffset == 0) && (dwPlay >= BUFFER_BYTES / 2))
-            {
-                break;
-            }
-
-            if ((dwNextWriteOffset == BUFFER_BYTES / 2) && (dwPlay < BUFFER_BYTES / 2))
-            {
-                break;
-            }
-
-            if (bClosing)
-            {
-                break;
-            }
-
-            Sleep(0);
-        }
-
-        if (bClosing)
-        {
-            break;
-        }
-
-        SetThreadPriority(hThread, THREAD_PRIORITY_HIGHEST);
-        hResult = lpDSBStreamBuffer->lpVtbl->Lock(lpDSBStreamBuffer, dwNextWriteOffset, BUFFER_BYTES / 2, &lpWrite1, &dwWrite1, NULL, NULL, 0);
-
-        if (hResult != DS_OK)
-        {
-            break;
-        }
-
-        for (lpb = lpWrite1; n != 0; n--)
-        {
-            *(lpb++) = (BYTE)(((WORD)(*lpSample1++) + (WORD)(*lpSample2++)) / 2);
-        }
-
-        hResult = lpDSBStreamBuffer->lpVtbl->Unlock(lpDSBStreamBuffer, (LPVOID)lpWrite1, dwWrite1, NULL, 0);
-
-        if (hResult != DS_OK)
-        {
-            break;
-        }
-
-        dwNextWriteOffset = BUFFER_BYTES / 2 - dwNextWriteOffset;
-    }
-
-    if (lpDSBStreamBuffer)
-    {
-        lpDSBStreamBuffer->lpVtbl->Release(lpDSBStreamBuffer);
-    }
-
-    lpDSBStreamBuffer = NULL;
-    bThreadRunning = FALSE;
-    return (0);
-}
-
-
-
-int AY8910_InitDSound(HWND hWndMain)
-{
-    HRESULT dsRetVal;
-    dsRetVal = DirectSoundCreate(NULL, &lpDS, NULL);
-
-    if (dsRetVal != DS_OK)
-    {
-        return (AY_CREATE_FAILED);
-    }
-
-    dsRetVal = lpDS->lpVtbl->SetCooperativeLevel(lpDS, hWndMain, DSSCL_NORMAL);
-
-    if (dsRetVal != DS_OK)
-    {
-        return (AY_SET_COOP_LEVEL_FAILED);
-    }
-
-    return (AY_OK);
-}
-
-
-int AY8910_SetupStreamBuffer()
-{
-    HRESULT dsRetVal;
-    WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
-    WaveFormat.nChannels = 1;
-    WaveFormat.nSamplesPerSec = PLAYBACK_FREQUENCY;
-    WaveFormat.wBitsPerSample = 8;
-    WaveFormat.nBlockAlign = WaveFormat.nChannels * WaveFormat.wBitsPerSample / 8;
-    WaveFormat.nAvgBytesPerSec = WaveFormat.nBlockAlign * WaveFormat.nSamplesPerSec;
-    WaveFormat.cbSize = 0;
-    //Create the secondary DirectSoundBuffer object to receive our sound data.
-    memset(&dsbd, 0, sizeof(DSBUFFERDESC));
-    dsbd.dwSize = sizeof(DSBUFFERDESC);
-    // Use new GetCurrentPosition() accuracy (DirectX 2 feature)
-    dsbd.dwFlags = DSBCAPS_CTRLPOSITIONNOTIFY | DSBCAPS_GETCURRENTPOSITION2 | DSBCAPS_STICKYFOCUS | DSBCAPS_CTRLFREQUENCY | DSBCAPS_CTRLPAN | DSBCAPS_CTRLVOLUME;
-    dwNotifySize = BUFFER_BYTES / NUM_PLAY_NOTIFICATIONS;
-    dsbd.dwBufferBytes = dwNotifySize * NUM_PLAY_NOTIFICATIONS;
-    //Set Format properties
-    dsbd.lpwfxFormat = &WaveFormat;
-    dsRetVal = lpDS->lpVtbl->CreateSoundBuffer(lpDS, &dsbd, &lpDSBStreamBuffer, NULL);
-
-    if (dsRetVal != DS_OK)
-    {
-        return (AY_CREATE_SBUF_FAILED);
-    }
-
-    dwNextWriteOffset = 0;
-    return (AY_OK);
-}
-
-
-
-int AY8910_SetupNotification()
-{
-    DWORD dwThreadId;
-    static DSBPOSITIONNOTIFY dsbPosNotify[NUM_PLAY_NOTIFICATIONS + 1];
-    int n;
-    HRESULT dsRetVal;
-    // now get the pointer to the notification interface.
-    dsRetVal = IDirectSoundNotify_QueryInterface(lpDSBStreamBuffer, &IID_IDirectSoundNotify, &((LPVOID)lpDirectSoundNotify));
-
-    if (dsRetVal != DS_OK)
-    {
-        return (AY_QINOTIFY_FAILED);
-    }
-
-    // Create the 2 events. One for Play one for stop.
-    hNotifyEvent[0] = CreateEvent(NULL, FALSE, FALSE, NULL);
-    hNotifyEvent[1] = CreateEvent(NULL, FALSE, FALSE, NULL);
-    // setup the first one.
-    dsbPosNotify[0].dwOffset = dwNotifySize;
-    dsbPosNotify[0].hEventNotify = hNotifyEvent[0];
-
-    for (n = 1; n < NUM_PLAY_NOTIFICATIONS; n++)
-    {
-        dsbPosNotify[n].dwOffset = dsbPosNotify[n - 1].dwOffset + dwNotifySize;
-        dsbPosNotify[n].hEventNotify = hNotifyEvent[0];
-    }
-
-    dsbPosNotify[n - 1].dwOffset -= 1;
-    // set the stop notification.
-    dsbPosNotify[n].dwOffset = DSBPN_OFFSETSTOP;
-    dsbPosNotify[n].hEventNotify = hNotifyEvent[1];
-
-    // setup notification
-    if (lpDirectSoundNotify->lpVtbl->SetNotificationPositions(lpDirectSoundNotify, NUM_PLAY_NOTIFICATIONS + 1, dsbPosNotify) != DS_OK)
-    {
-        return (AY_SET_NOTIFICATION_POSITIONS_FAILED);
-    }
-
-    // Now create the thread to wait on the events created.
-    if ((hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)AY8910_HandleNotifications, NULL, 0, &dwThreadId)) == NULL)
-    {
-        return (AY_CREATE_NOTIFICATION_HANDLER_FAILED);
-    }
-
-    return (AY_OK);
-}
-
-
-
-int AY8910_Init(HWND hWndMain)
-{
-    int nResult;
-    DWORD dwThreadId;
-    hWinMain = hWndMain;
-    bCantInitialise = TRUE;
-    bClosing = FALSE;
-    bUseNotify = FALSE;
-
-    if (!AY8910_Initialised)
-    {
-        if ((nResult = AY8910_InitDSound(hWndMain)) != AY_OK)
-        {
-            return (nResult);
-        }
-
-        if ((nResult = AY8910_SetupStreamBuffer()) != AY_OK)
-        {
-            return (nResult);
-        }
-
-        /* Try to set up notifications - if this fails, set up the more primative method */
-        if ((nResult = AY8910_SetupNotification()) == AY_OK)
-        {
-            AYInit(2, PLAYBACK_FREQUENCY, PLAYBACK_FREQUENCY / UPDATES_PER_SEC);
-            bUseNotify = TRUE;
-        }
-        else
-        {
-            AYInit(2, PLAYBACK_FREQUENCY, PLAYBACK_FREQUENCY / UPDATES_PER_SEC_DX3);
-
-            if ((hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)AY8910_SoundThread, NULL, 0, &dwThreadId)) == NULL)
-            {
-                return (AY_INIT_FAILED);
-            }
-        }
-
-        if (lpDSBStreamBuffer->lpVtbl->SetCurrentPosition(lpDSBStreamBuffer, 0) != DS_OK)
-        {
-            return (AY_INIT_FAILED);
-        }
-
-        if (lpDSBStreamBuffer->lpVtbl->Play(lpDSBStreamBuffer, 0, 0, DSBPLAY_LOOPING) != DS_OK)
-        {
-            return (AY_PLAY_FAILED);
-        }
-
-        AY8910_Initialised = TRUE;
-        bCantInitialise = FALSE;
-        AYResetChip(0);
-        AYResetChip(1);
-    }
-
-    return (AY_OK);
-}
-
-
-
-void AY8910_Close()
-{
-    int n;
-
-    if (AY8910_Initialised)
-    {
-        if (bUseNotify)
-        {
-            CloseHandle(hNotifyEvent[0]);
-            CloseHandle(hNotifyEvent[1]);
-            hNotifyEvent[0] = hNotifyEvent[1] = (HANDLE)NULL;
-        }
-
-        bClosing = TRUE;
-
-        for (n = 0; (n < 200) && bThreadRunning; n++)
-        {
-            Sleep(10);
-        }
-
-        lpDS->lpVtbl->Release(lpDS);
-        AY8910_Initialised = FALSE;
-    }
+void ay8910_close(void) {
+  if (!ay8910_initialised)
+    return;
+
+  if (audio_device != 0) {
+    SDL_CloseAudioDevice(audio_device);
+    audio_device = 0;
+  }
+
+  ay8910_initialised = false;
 }

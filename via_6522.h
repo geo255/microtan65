@@ -1,15 +1,14 @@
 #ifndef __VIA_6522_H__
 #define __VIA_6522_H__
 
+#include "system.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "system.h"
 
-typedef enum
-{
-    via_6522_clear,
-    via_6522_set,
-    via_6522_write_all
+typedef enum {
+  via_6522_clear,
+  via_6522_set,
+  via_6522_write_all
 } via_6522_port_operation_t;
 
 extern void via_6522_reset(uint8_t bank, uint16_t address);
@@ -19,7 +18,7 @@ extern void via_6522_write_register(int device_index, int register_index, uint8_
 extern uint8_t via_6522_read_register(int pnDevice, int pnReg);
 extern uint8_t via_6522_read_output_port(int pnDevice, int pnPort);
 extern void via_6522_reload();
-extern int via_6522_initialise(uint8_t bank, uint16_t address, uint16_t param, char *identifier);
+extern int via_6522_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier);
 extern void via_6522_print_regs();
 
 #endif // __VIA_6522_H__
