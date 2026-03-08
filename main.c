@@ -87,9 +87,11 @@ int main(int argc, char* argv[]) {
   system_reset();
 
   if (argc > 1) {
-    system_load_m65_file(argv[1]);
+    if (system_load_program_file(argv[1]) != RV_OK) {
+      printf("Failed to load [%s]\r\n", argv[1]);
+    }
 
-    if (strstr(argv[1], "berzerk.m65") != NULL) {
+    if (strstr(argv[1], "berzerk") != NULL) {
       keyboard_use_hex_keypad(true);
     }
   }
@@ -237,5 +239,7 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
+
+
 
 

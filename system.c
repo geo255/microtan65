@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <string.h>
 
 #include "ay8910.h"
@@ -22,6 +23,52 @@ static void read_and_ignore(void* ptr, size_t size, size_t count, FILE* file) {
   (void)items_read;
 }
 
+static int hex_nibble(char value) {
+  if ((value >= '0') && (value <= '9')) {
+    return value - '0';
+  }
+
+  if ((value >= 'a') && (value <= 'f')) {
+    return 10 + (value - 'a');
+  }
+
+  if ((value >= 'A') && (value <= 'F')) {
+    return 10 + (value - 'A');
+  }
+
+  return -1;
+}
+
+static int parse_hex_byte(const char* ptr, uint8_t* value) {
+  int hi = hex_nibble(ptr[0]);
+  int lo = hex_nibble(ptr[1]);
+
+  if ((hi < 0) || (lo < 0)) {
+    return RV_INVALID_FILE;
+  }
+
+  *value = (uint8_t)((hi << 4) | lo);
+  return RV_OK;
+}
+
+static bool file_name_has_extension(const char* file_name, const char* extension) {
+  size_t file_name_length = strlen(file_name);
+  size_t extension_length = strlen(extension);
+
+  if (file_name_length < extension_length) {
+    return false;
+  }
+
+  const char* file_extension = file_name + (file_name_length - extension_length);
+
+  for (size_t i = 0; i < extension_length; i++) {
+    if (tolower((unsigned char)file_extension[i]) != tolower((unsigned char)extension[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
 // List of system devices
 device_configuration_t system_devices[] =
   {
@@ -177,6 +224,180 @@ int system_load_m65_file(char* file_name) {
   return RV_OK;
 }
 
+int system_load_intel_hex_file(char* file_name) {
+  FILE* hex_file = fopen(file_name, "r");
+
+  if (!hex_file) {
+    printf("Error opening [%s]\r\n", file_name);
+    return RV_FILE_OPEN_ERROR;
+  }
+
+  uint8_t* memory = system_get_memory_pointer(0x0000);
+  uint32_t upper_address = 0;
+  int line_number = 0;
+  bool saw_eof = false;
+  char line[1024];
+
+  while (fgets(line, sizeof(line), hex_file) != NULL) {
+    line_number++;
+
+    size_t line_length = strlen(line);
+    while ((line_length > 0) && isspace((unsigned char)line[line_length - 1])) {
+      line[--line_length] = '\0';
+    }
+
+    char* cursor = line;
+    while ((*cursor != '\0') && isspace((unsigned char)*cursor)) {
+      cursor++;
+    }
+
+    if (*cursor == '\0') {
+      continue;
+    }
+
+    if (*cursor != ':') {
+      printf("Intel HEX parse error line %d: missing colon\r\n", line_number);
+      fclose(hex_file);
+      return RV_INVALID_FILE;
+    }
+
+    cursor++;
+    uint8_t byte_count;
+    uint8_t address_hi;
+    uint8_t address_lo;
+    uint8_t record_type;
+
+    if ((parse_hex_byte(cursor + 0, &byte_count) != RV_OK) ||
+        (parse_hex_byte(cursor + 2, &address_hi) != RV_OK) ||
+        (parse_hex_byte(cursor + 4, &address_lo) != RV_OK) ||
+        (parse_hex_byte(cursor + 6, &record_type) != RV_OK)) {
+      printf("Intel HEX parse error line %d: invalid header\r\n", line_number);
+      fclose(hex_file);
+      return RV_INVALID_FILE;
+    }
+
+    size_t expected_hex_chars = (size_t)(10 + (byte_count * 2));
+    if (strlen(cursor) != expected_hex_chars) {
+      printf("Intel HEX parse error line %d: invalid line length\r\n", line_number);
+      fclose(hex_file);
+      return RV_INVALID_FILE;
+    }
+
+    uint8_t data[256];
+    for (int i = 0; i < byte_count; i++) {
+      if (parse_hex_byte(cursor + 8 + (i * 2), &data[i]) != RV_OK) {
+        printf("Intel HEX parse error line %d: invalid data\r\n", line_number);
+        fclose(hex_file);
+        return RV_INVALID_FILE;
+      }
+    }
+
+    uint8_t checksum;
+    if (parse_hex_byte(cursor + 8 + (byte_count * 2), &checksum) != RV_OK) {
+      printf("Intel HEX parse error line %d: invalid checksum\r\n", line_number);
+      fclose(hex_file);
+      return RV_INVALID_FILE;
+    }
+
+    uint32_t sum = byte_count + address_hi + address_lo + record_type;
+    for (int i = 0; i < byte_count; i++) {
+      sum += data[i];
+    }
+
+    if ((uint8_t)(sum + checksum) != 0) {
+      printf("Intel HEX parse error line %d: checksum mismatch\r\n", line_number);
+      fclose(hex_file);
+      return RV_INVALID_FILE;
+    }
+
+    uint32_t base_address = upper_address + (((uint16_t)address_hi << 8) | address_lo);
+
+    switch (record_type) {
+      case 0x00:
+        for (int i = 0; i < byte_count; i++) {
+          uint32_t target_address = base_address + i;
+          if (target_address > 0xffff) {
+            printf("Intel HEX parse error line %d: address out of range\r\n", line_number);
+            fclose(hex_file);
+            return RV_INVALID_FILE;
+          }
+          memory[target_address] = data[i];
+        }
+        break;
+
+      case 0x01:
+        saw_eof = true;
+        break;
+
+      case 0x02:
+        if (byte_count != 2) {
+          printf("Intel HEX parse error line %d: invalid segment record\r\n", line_number);
+          fclose(hex_file);
+          return RV_INVALID_FILE;
+        }
+        upper_address = (((uint32_t)data[0] << 8) | data[1]) << 4;
+        break;
+
+      case 0x03:
+      case 0x05:
+        break;
+
+      case 0x04:
+        if (byte_count != 2) {
+          printf("Intel HEX parse error line %d: invalid linear record\r\n", line_number);
+          fclose(hex_file);
+          return RV_INVALID_FILE;
+        }
+        upper_address = (((uint32_t)data[0] << 8) | data[1]) << 16;
+        break;
+
+      default:
+        printf("Intel HEX parse error line %d: unsupported record type %02x\r\n", line_number, record_type);
+        fclose(hex_file);
+        return RV_INVALID_FILE;
+    }
+
+    if (saw_eof) {
+      break;
+    }
+  }
+
+  fclose(hex_file);
+
+  if (!saw_eof) {
+    printf("Intel HEX warning: no EOF record in [%s]\r\n", file_name);
+  }
+
+  return RV_OK;
+}
+
+int system_load_program_file(char* file_name) {
+  if (file_name_has_extension(file_name, ".hex") ||
+      file_name_has_extension(file_name, ".ihx") ||
+      file_name_has_extension(file_name, ".ihex")) {
+    return system_load_intel_hex_file(file_name);
+  }
+
+  if (file_name_has_extension(file_name, ".m65")) {
+    return system_load_m65_file(file_name);
+  }
+
+  FILE* file = fopen(file_name, "r");
+  if (file) {
+    int first_non_whitespace = fgetc(file);
+    while ((first_non_whitespace != EOF) && isspace(first_non_whitespace)) {
+      first_non_whitespace = fgetc(file);
+    }
+    fclose(file);
+
+    if (first_non_whitespace == ':') {
+      return system_load_intel_hex_file(file_name);
+    }
+  }
+
+  return system_load_m65_file(file_name);
+}
+
 void system_reset() {
   device_configuration_ptr_t device = system_devices;
 
@@ -213,5 +434,10 @@ void system_close() {
     device++;
   }
 }
+
+
+
+
+
 
 

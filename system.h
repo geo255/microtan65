@@ -47,6 +47,9 @@ extern uint8_t system_read_memory(uint16_t address);
 extern void system_write_memory(uint16_t address, uint8_t value);
 extern uint8_t* system_get_memory_pointer(uint16_t address);
 extern int system_load_m65_file(char* file_name);
+extern int system_load_intel_hex_file(char* file_name);
+extern int system_load_program_file(char* file_name);
 extern void system_close();
 
 #endif //__SYSTEM_H__
+

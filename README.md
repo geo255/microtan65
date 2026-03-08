@@ -15,7 +15,7 @@ Emulates a Microtan 65 system with the following specifications:
 - 8-way Joystick (via cursor keys) connected to 6522
 - 4x Tangerine Hi_res boards, providing RGBI at 256x256
 - Prototype "GPU" graphics board - in development
-- My .m65 file format
+- My .m65 snapshot format and Intel HEX program loading
 
 ## TODO:
 
@@ -23,7 +23,7 @@ Emulates a Microtan 65 system with the following specifications:
 
 - Complete hex keypad emulation
 - Emulation of the serial interface
-- Support for more file formats (Zillion hex and Intel hex)
+- Support for more file formats (Zillion hex)
 - A menu
 - Finish the GPU
 
@@ -180,3 +180,12 @@ F1 displays a brief help window F2 emulates the Tangerine Hex Keypad F3 emulated
 [](https://github.com/geo255/microtan65#further-information)
 
 Go to my website at [https://geoff.org.uk/microtan/](https://geoff.org.uk/microtan/) for more Microtan 65 information and documentation.
+
+
+To load an Intel HEX file:
+
+```
+./microtan65 program.hex
+```
+
+The emulator auto-detects `.m65`, `.hex`, `.ihx`, and `.ihex` files by extension (and falls back to content detection for Intel HEX).
