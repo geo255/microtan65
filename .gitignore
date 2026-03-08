@@ -1,3 +1,11 @@
 .vscode/
 .oldgit/
 
+# Build artifacts
+*.o
+microtan65
+microtan65.exe
+
+# Local/editor/generated files
+*.orig
+microtan_settings.txt

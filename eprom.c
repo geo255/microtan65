@@ -34,6 +34,10 @@ int eprom_load(char* file_name, uint16_t address) {
 }
 
 int eprom_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)address;
+  (void)param;
+  (void)identifier;
   int rv;
   rv = eprom_load("microtan.rom", 0xC000);
 

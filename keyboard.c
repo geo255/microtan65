@@ -61,8 +61,13 @@ bool keyboard_using_hex_keypad() {
 }
 
 int keyboard_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)param;
+  (void)identifier;
   memset(hex_keypad, 0x00, sizeof(hex_keypad));
   use_hex_keypad = false;
   system_register_memory_mapped_device(address, address + 0x0f, keyboard_read_callback, keyboard_write_callback, false);
   return RV_OK;
 }
+
+

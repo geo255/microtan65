@@ -3,6 +3,8 @@
 #include <dirent.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 void popup_show(SDL_Renderer* renderer, const char* message) {
   SDL_Color text_color = {0, 0, 0, 255};
@@ -133,3 +135,4 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
     SDL_DestroyTexture(text_textures[i]);
   }
 }
+

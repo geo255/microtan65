@@ -17,6 +17,11 @@ static int device_count = 0;
 static uint8_t system_memory[65536];
 static uint8_t memory_read_only[65536];
 
+static void read_and_ignore(void* ptr, size_t size, size_t count, FILE* file) {
+  size_t items_read = fread(ptr, size, count, file);
+  (void)items_read;
+}
+
 // List of system devices
 device_configuration_t system_devices[] =
   {
@@ -121,18 +126,17 @@ int system_load_m65_file(char* file_name) {
   if (m65_file_size != 8263) {
     uint8_t ay8910_registers[32];
     uint8_t chunky_state;
-    bool extended = true;
     uint16_t file_version;
     uint16_t memory_size;
-    fread(&file_version, 1, sizeof(file_version), m65_file);
-    fread(&memory_size, 1, sizeof(memory_size), m65_file);
-    fread(system_memory, 1, memory_size, m65_file);
-    fread(system_memory + 0xbfc0, 1, 16, m65_file);
-    fread(system_memory + 0xbfe0, 1, 16, m65_file);
-    fread(system_memory + 0xbff0, 1, 16, m65_file);
-    fread(system_memory + 0xbc04, 1, 1, m65_file);
-    fread(&chunky_state, 1, 1, m65_file);
-    fread(ay8910_registers, 1, 32, m65_file);
+    read_and_ignore(&file_version, 1, sizeof(file_version), m65_file);
+    read_and_ignore(&memory_size, 1, sizeof(memory_size), m65_file);
+    read_and_ignore(system_memory, 1, memory_size, m65_file);
+    read_and_ignore(system_memory + 0xbfc0, 1, 16, m65_file);
+    read_and_ignore(system_memory + 0xbfe0, 1, 16, m65_file);
+    read_and_ignore(system_memory + 0xbff0, 1, 16, m65_file);
+    read_and_ignore(system_memory + 0xbc04, 1, 1, m65_file);
+    read_and_ignore(&chunky_state, 1, 1, m65_file);
+    read_and_ignore(ay8910_registers, 1, 32, m65_file);
 
     if (chunky_state) {
       system_read_memory(0xbff0);
@@ -141,16 +145,16 @@ int system_load_m65_file(char* file_name) {
     }
 
     if (file_version >= 1) {
-      fread(display_get_hires_memory_pointer(0), 1, 8192, m65_file);
-      fread(display_get_hires_memory_pointer(1), 1, 8192, m65_file);
-      fread(display_get_hires_memory_pointer(2), 1, 8192, m65_file);
-      fread(display_get_hires_memory_pointer(3), 1, 8192, m65_file);
+      read_and_ignore(display_get_hires_memory_pointer(0), 1, 8192, m65_file);
+      read_and_ignore(display_get_hires_memory_pointer(1), 1, 8192, m65_file);
+      read_and_ignore(display_get_hires_memory_pointer(2), 1, 8192, m65_file);
+      read_and_ignore(display_get_hires_memory_pointer(3), 1, 8192, m65_file);
     }
 
     // Write AY8910 registers here
     via_6522_reload();
   } else {
-    fread(system_memory, 1, 0x2000, m65_file);
+    read_and_ignore(system_memory, 1, 0x2000, m65_file);
   }
 
   uint8_t chunky_graphics_memory[512];
@@ -158,7 +162,7 @@ int system_load_m65_file(char* file_name) {
   uint8_t b;
 
   for (int i = 0; i < 0x40; i++) {
-    fread(&b, 1, 1, m65_file);
+    read_and_ignore(&b, 1, 1, m65_file);
 
     for (int bit = 0; bit < 8; b >>= 1, bit++) {
       *chunky++ = (b & 1);
@@ -167,7 +171,7 @@ int system_load_m65_file(char* file_name) {
 
   display_load_chunky_memory(chunky_graphics_memory);
   uint8_t status[7];
-  fread(status, 1, sizeof(status), m65_file);
+  read_and_ignore(status, 1, sizeof(status), m65_file);
   fclose(m65_file);
   cpu_6502_continue((uint16_t)status[0] | (uint16_t)status[1] << 8, status[3], status[4], status[5], status[6], status[2]);
   return RV_OK;
@@ -209,3 +213,5 @@ void system_close() {
     device++;
   }
 }
+
+

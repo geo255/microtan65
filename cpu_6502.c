@@ -859,7 +859,6 @@ static void sbc() {
   }
 
   if (reg_psw & 0x08) {
-    uint8_t bHalfCarry = 0x10;
     int operator_1 = reg_a;
     int store = (operator_1 & 0x0f) - ((int)byte_value & 0x0f) - save_carry;
     reg_a = ((store & 0x10) == 0) ? store : (store - 6);
@@ -1438,6 +1437,7 @@ void cpu_6502_execute(int timer_ticks) {
 }
 
 void cpu_6502_delayed_nmi_callback(uint16_t address, uint8_t value) {
+  (void)value;
   if ((address & 0x03) == 1) {
     delayed_nmi_counter = 8;
   }
@@ -1455,6 +1455,8 @@ void cpu_6502_continue(uint16_t pc, uint8_t a, uint8_t ix, uint8_t iy, uint8_t s
 }
 
 void cpu_6502_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
+  (void)address;
   reg_a = 0;
   reg_x = 0;
   reg_y = 0;
@@ -1473,7 +1475,11 @@ void cpu_6502_reset(uint8_t bank, uint16_t address) {
 }
 
 int cpu_6502_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)param;
+  (void)identifier;
   system_register_memory_mapped_device(0xBFF0, 0xBFFF, NULL, cpu_6502_delayed_nmi_callback, false);
   cpu_6502_reset(bank, address);
   return RV_OK;
 }
+
+

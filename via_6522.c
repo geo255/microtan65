@@ -144,7 +144,6 @@ uint8_t via_6522_read_register(int device_index, int register_index) {
     return 0x00;
   }
 
-  uint8_t rv;
   via_6522_registers[device_index][IFR] &= flag_clear_read_table[register_index];
   return via_6522_registers[device_index][register_index];
 }
@@ -223,6 +222,7 @@ void via_6522_reload() {
 }
 
 void via_6522_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
   int n;
 
   for (n = 0; n < number_of_devices; n++) {
@@ -237,6 +237,9 @@ void via_6522_reset(uint8_t bank, uint16_t address) {
 }
 
 int via_6522_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)param;
+  (void)identifier;
   if (number_of_devices == MAX_DEVICES) {
     return RV_DEVICE_NOT_ADDED;
   }
@@ -250,3 +253,5 @@ int via_6522_initialise(uint8_t bank, uint16_t address, uint16_t param, char* id
   number_of_devices++;
   return RV_OK;
 }
+
+

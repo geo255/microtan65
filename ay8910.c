@@ -5,6 +5,14 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#ifndef S_ISSOCK
+#ifdef S_IFSOCK
+#define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
+#else
+#define S_ISSOCK(mode) (0)
+#endif
+#endif
+
 /* ---------------------------------------------------------------------------
  * AY-3-8910 Programmable Sound Generator Emulation
  * --------------------------------------------------------------------------*/
@@ -413,3 +421,4 @@ void ay8910_close(void) {
 
   ay8910_initialised = false;
 }
+

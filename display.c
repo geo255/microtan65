@@ -67,20 +67,25 @@ static display_hires_mode_t hires_mode = DISPLAY_HIRES_MODE_NONE;
 static bool display_updated = true;
 
 static uint8_t main_display_read_callback(uint16_t address) {
+  (void)address;
   return 0;
 }
 
 void main_display_write_callback(uint16_t address, uint8_t value) {
+  (void)value;
   chunky_graphics_bits[address - 0x0200] = chunky_bit;
   display_updated = true;
 }
 
 static uint8_t chunky_enable_callback(uint16_t address) {
+  (void)address;
   chunky_bit = true;
   return 0;
 }
 
 void chunky_disable_callback(uint16_t address, uint8_t value) {
+  (void)address;
+  (void)value;
   chunky_bit = false;
 }
 
@@ -670,8 +675,8 @@ void display_gpu_write_callback(uint16_t address, uint8_t value) {
 
       case 0x11:
         display_gpu_draw_line(gpu_reg[1], gpu_reg[2], gpu_reg[3], gpu_reg[4], gpu_reg[0]);
-        gpu_reg[3], gpu_reg[1];
-        gpu_reg[4], gpu_reg[2];
+        gpu_reg[1] = gpu_reg[3];
+        gpu_reg[2] = gpu_reg[4];
         display_updated = true;
         break;
 

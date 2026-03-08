@@ -36,7 +36,11 @@ void load_window_settings(int* x, int* y, int* width, int* height) {
   FILE* file = fopen(SETTINGS_FILE, "r");
 
   if (file) {
-    fscanf(file, "%d %d %d %d", x, y, width, height);
+    int values_read = fscanf(file, "%d %d %d %d", x, y, width, height);
+    if (values_read != 4) {
+      *x = SDL_WINDOWPOS_CENTERED;
+      *y = SDL_WINDOWPOS_CENTERED;
+    }
     fclose(file);
   }
 }
@@ -58,11 +62,8 @@ SDL_Texture* create_scanline_texture(SDL_Renderer* renderer, int width, int heig
   }
 
   uint32_t transparent_100 = SDL_MapRGBA(scanline_surface->format, 0, 0, 0, 0);
-  uint32_t transparent_75 = SDL_MapRGBA(scanline_surface->format, 0, 0, 0, 64);
   uint32_t transparent_50 = SDL_MapRGBA(scanline_surface->format, 0, 0, 0, 128);
   uint32_t transparent_25 = SDL_MapRGBA(scanline_surface->format, 0, 0, 0, 192);
-  uint32_t red = SDL_MapRGBA(scanline_surface->format, 255, 0, 0, 255);
-  uint32_t white = SDL_MapRGBA(scanline_surface->format, 255, 255, 255, 255);
 
   for (int y = 0; y < texture_height; y += scan_height) {
     for (int x = 0; x < texture_width; x++) {
@@ -104,7 +105,6 @@ int main(int argc, char* argv[]) {
   uint32_t pixels[DISPLAY_WIDTH * DISPLAY_HEIGHT];
   bool is_running = true;
   SDL_Event event;
-  uint32_t cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
   struct timespec start_time;
   struct timespec end_time;
   struct timespec sleep_time;
@@ -165,11 +165,11 @@ int main(int argc, char* argv[]) {
           break;
 
         case SDL_TEXTINPUT: {
-          uint8_t* ascii_value = event.text.text;
+          char* ascii_value = event.text.text;
 
           while (*ascii_value) {
             // Microtan requires capitals for all commands, so swap upper/lower case for convenience
-            uint8_t key = *ascii_value;
+            uint8_t key = (uint8_t)*ascii_value;
 
             if (((key >= 'A') && (key <= 'Z')) || ((key >= 'a') && (key <= 'z'))) {
               key ^= 0x20;
@@ -237,3 +237,5 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
+
+

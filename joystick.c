@@ -32,8 +32,9 @@ void joystick() {
   static uint8_t previous_joystick_keys = 0;
   uint8_t joystick_keys = 0;
   const uint8_t* key_state = SDL_GetKeyboardState(NULL);
+  int joystick_count = (int)(sizeof(joystick_definition_table) / sizeof(joystick_definition_table[0]));
 
-  for (int i = 0; i < sizeof(joystick_definition_table) / sizeof(joystick_definition_table[0]); i++) {
+  for (int i = 0; i < joystick_count; i++) {
     if (key_state[joystick_definition_table[i].sdl_scancode]) {
       joystick_keys |= (1 << i);
     }
@@ -45,7 +46,7 @@ void joystick() {
 
   previous_joystick_keys = joystick_keys;
 
-  for (int i = 0; i < sizeof(joystick_definition_table) / sizeof(joystick_definition_table[0]); i++) {
+  for (int i = 0; i < joystick_count; i++) {
     bool key_down = (joystick_keys >> i) & 0x01;
 
     if (keyboard_using_hex_keypad()) {
@@ -59,3 +60,5 @@ void joystick() {
     }
   }
 }
+
+

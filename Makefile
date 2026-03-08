@@ -1,12 +1,59 @@
-CC = gcc
-CFLAGS = $(shell sdl2-config --cflags)
-LIBS = $(shell sdl2-config --libs) -lSDL2_ttf
-LIBS += -lSDL2_mixer
+.RECIPEPREFIX := >
 
-all: output
+CC ?= gcc
+TARGET := microtan65
+PYTHON ?= python3
 
-output: main.c
-	$(CC) $(CFLAGS) ay8910.c cpu_6502.c display.c eprom.c invaders_sound.c joystick.c keyboard.c main.c popup.c serial.c system.c via_6522.c $(LIBS) -o microtan65
+SOURCES := ay8910.c cpu_6502.c display.c eprom.c invaders_sound.c joystick.c keyboard.c main.c popup.c serial.c system.c via_6522.c
+HEADERS := ay8910.h cpu_6502.h display.h eprom.h external_filenames.h function_return_codes.h invaders_sound.h joystick.h keyboard.h popup.h serial.h system.h via_6522.h
+OBJECTS := $(SOURCES:.c=.o)
+
+BASE_CFLAGS := $(shell sdl2-config --cflags) -std=c11 -D_POSIX_C_SOURCE=200809L
+WARN_CFLAGS := -Wall -Wextra -Wpedantic
+DEBUG_CFLAGS := -O0 -g3
+RELEASE_CFLAGS := -O2
+SANITIZE_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer
+
+LDLIBS := $(shell sdl2-config --libs) -lSDL2_ttf -lSDL2_mixer
+LDFLAGS ?=
+CFLAGS ?= $(BASE_CFLAGS) $(WARN_CFLAGS) $(RELEASE_CFLAGS)
+
+all: release
+
+release: CFLAGS := $(BASE_CFLAGS) $(WARN_CFLAGS) $(RELEASE_CFLAGS)
+release: $(TARGET)
+
+debug: CFLAGS := $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS)
+debug: $(TARGET)
+
+sanitize: CFLAGS := $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) $(SANITIZE_FLAGS)
+sanitize: LDFLAGS := $(SANITIZE_FLAGS)
+sanitize: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+>$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $(TARGET)
+
+%.o: %.c $(HEADERS)
+>$(CC) $(CFLAGS) -c $< -o $@
+
+run: $(TARGET)
+>./$(TARGET)
+
+smoke:
+>$(PYTHON) tools/smoke_check.py
+
+format:
+>clang-format -i $(SOURCES) $(HEADERS)
+
+lint:
+>clang-format --dry-run --Werror $(SOURCES) $(HEADERS)
 
 clean:
-	rm -f output
+>$(RM) $(OBJECTS) $(TARGET) $(TARGET).exe
+
+.PHONY: all release debug sanitize run smoke format lint clean
+
+
+
+
+

@@ -89,7 +89,7 @@ static int play_sound(sound_id_t sound, int loops) {
  * Call this from your memory write callback when address == 0xBC04
  * --------------------------------------------------------------------------*/
 void invaders_sound_write_callback(uint16_t address, uint8_t value) {
-  address;
+  (void)address;
 
   if (!invaders_sound_initialized) {
     prev_value = value;
@@ -159,6 +159,8 @@ void invaders_sound_write_callback(uint16_t address, uint8_t value) {
  * Reset sound state (call when game resets)
  * --------------------------------------------------------------------------*/
 void invaders_sound_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
+  (void)address;
   if (!invaders_sound_initialized)
     return;
 
@@ -173,6 +175,10 @@ void invaders_sound_reset(uint8_t bank, uint16_t address) {
  * Initialize SDL_mixer and load WAV files
  * --------------------------------------------------------------------------*/
 int invaders_sound_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)address;
+  (void)param;
+  (void)identifier;
   if (invaders_sound_initialized)
     return 0;
 

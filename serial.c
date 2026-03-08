@@ -1,9 +1,13 @@
 #include "serial.h"
 #include <string.h>
 
+#include "function_return_codes.h"
+
 static uint8_t serial_registers[4];
 
 void serial_write_callback(uint16_t address, uint8_t value) {
+  (void)address;
+  (void)value;
 }
 
 uint8_t serial_read_callback(uint16_t address) {
@@ -11,9 +15,15 @@ uint8_t serial_read_callback(uint16_t address) {
 }
 
 void serial_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
+  (void)address;
   memset(serial_registers, 0xff, sizeof(serial_registers));
 }
 
 int serial_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
+  (void)bank;
+  (void)param;
+  (void)identifier;
   system_register_memory_mapped_device(address, address + 0x03, serial_read_callback, serial_write_callback, false);
+  return RV_OK;
 }
