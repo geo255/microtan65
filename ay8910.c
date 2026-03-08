@@ -198,6 +198,10 @@ static void audio_callback(void* userdata, uint8_t* stream, int len) {
   for (int i = 0; i < num_samples; i++) {
     stream[i] = (uint8_t)(((unsigned)chip_buffer[0][i] + (unsigned)chip_buffer[1][i]) / 2);
   }
+
+  if (num_samples < len) {
+    memset(stream + num_samples, 128, (size_t)(len - num_samples));
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -226,38 +230,7 @@ void ay8910_write_callback(uint16_t address, uint8_t value) {
   if (n < 0 || n >= MAX_DEVICES)
     return;
 
-  /* Lock audio to prevent conflicts with audio callback */
-  if (audio_device != 0)
-    SDL_LockAudioDevice(audio_device);
-
-  ay8910_t* psg = &chips[n];
-  psg->regs[r] = value;
-
-  switch (r) {
-    case AY_AVOL:
-    case AY_BVOL:
-    case AY_CVOL:
-      psg->regs[r] &= 0x1F; /* volume is 5 bits */
-      break;
-
-    case AY_ESHAPE:
-      psg->count_env = 0; /* writing shape resets envelope counter */
-      psg->regs[AY_ESHAPE] &= 0x0F;
-      break;
-
-    case AY_PORTA:
-      if (psg->port[0])
-        psg->port[0](psg, AY_PORTA, 1, value);
-      break;
-
-    case AY_PORTB:
-      if (psg->port[1])
-        psg->port[1](psg, AY_PORTB, 1, value);
-      break;
-  }
-
-  if (audio_device != 0)
-    SDL_UnlockAudioDevice(audio_device);
+  ay8910_write_reg(n, r, value);
 }
 
 uint8_t ay8910_read_callback(uint16_t address) {
@@ -280,7 +253,62 @@ uint8_t ay8910_read_callback(uint16_t address) {
   if (n < 0 || n >= MAX_DEVICES)
     return 0xff;
 
-  /* Lock audio to prevent conflicts with audio callback */
+  return ay8910_read_reg(n, r);
+}
+
+void ay8910_write_reg(int n, int r, int v) {
+  if (!ay8910_initialised) {
+    return;
+  }
+
+  if (n < 0 || n >= MAX_DEVICES || r < 0 || r > 0x0f) {
+    return;
+  }
+
+  uint8_t value = (uint8_t)v;
+
+  if (audio_device != 0)
+    SDL_LockAudioDevice(audio_device);
+
+  ay8910_t* psg = &chips[n];
+  psg->regs[r] = value;
+
+  switch (r) {
+    case AY_AVOL:
+    case AY_BVOL:
+    case AY_CVOL:
+      psg->regs[r] &= 0x1F;
+      break;
+
+    case AY_ESHAPE:
+      psg->count_env = 0;
+      psg->regs[AY_ESHAPE] &= 0x0F;
+      break;
+
+    case AY_PORTA:
+      if (psg->port[0])
+        psg->port[0](psg, AY_PORTA, 1, value);
+      break;
+
+    case AY_PORTB:
+      if (psg->port[1])
+        psg->port[1](psg, AY_PORTB, 1, value);
+      break;
+  }
+
+  if (audio_device != 0)
+    SDL_UnlockAudioDevice(audio_device);
+}
+
+uint8_t ay8910_read_reg(int n, int r) {
+  if (!ay8910_initialised) {
+    return 0xff;
+  }
+
+  if (n < 0 || n >= MAX_DEVICES || r < 0 || r > 0x0f) {
+    return 0xff;
+  }
+
   if (audio_device != 0)
     SDL_LockAudioDevice(audio_device);
 
@@ -349,6 +377,9 @@ int ay8910_initialise(uint8_t bank, uint16_t address, uint16_t param, char* iden
     reset_chip(i);
   }
 
+  system_register_memory_mapped_device(0xbc00, 0xbc01, ay8910_read_callback, ay8910_write_callback, false);
+  system_register_memory_mapped_device(0xbc02, 0xbc03, ay8910_read_callback, ay8910_write_callback, false);
+
   /* For WSLg support - point PulseAudio to WSLg server if it exists */
   const char* wslg_pulse = "/mnt/wslg/PulseServer";
   struct stat st;
@@ -391,9 +422,6 @@ int ay8910_initialise(uint8_t bank, uint16_t address, uint16_t param, char* iden
            SDL_AUDIO_BITSIZE(have.format),
            have.channels);
   }
-
-  system_register_memory_mapped_device(0xbc00, 0xbc01, ay8910_read_callback, ay8910_write_callback, false);
-  system_register_memory_mapped_device(0xbc02, 0xbc03, ay8910_read_callback, ay8910_write_callback, false);
 
   ay8910_initialised = true;
   return 0;
