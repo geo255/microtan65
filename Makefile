@@ -40,7 +40,27 @@ run: $(TARGET)
 >./$(TARGET)
 
 smoke:
->$(PYTHON) tools/smoke_check.py
+>missing=0; \
+>for f in \
+>  microtan.rom \
+>  charset.rom \
+>  arial.ttx \
+>  cour.ttf \
+>  adventure.m65 \
+>  astrofighter.m65 \
+>  berzerk.m65 \
+>  defender.m65 \
+>  invaders.m65; do \
+>  if [ ! -f "$$f" ]; then \
+>    echo "Missing: $$f"; \
+>    missing=1; \
+>  fi; \
+>done; \
+>if [ $$missing -ne 0 ]; then \
+>  echo "Smoke check failed."; \
+>  exit 1; \
+>fi; \
+>echo "Smoke check passed."
 
 format:
 >clang-format -i $(SOURCES) $(HEADERS)
