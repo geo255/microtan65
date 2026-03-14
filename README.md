@@ -24,7 +24,6 @@ Emulates a Microtan 65 system with the following specifications:
 - Complete hex keypad emulation
 - Emulation of the serial interface
 - Support for more file formats (Zillion hex)
-- A menu
 - Finish the GPU
 
 ## BUILDING:
