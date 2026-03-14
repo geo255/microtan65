@@ -238,6 +238,20 @@ void display_load_chunky_memory(uint8_t* src) {
   memcpy(chunky_graphics_bits, src, sizeof(chunky_graphics_bits));
 }
 
+void display_save_chunky_memory(uint8_t* dest) {
+  for (int i = 0; i < 64; i++) {
+    uint8_t packed = 0;
+
+    for (int bit = 0; bit < 8; bit++) {
+      if (chunky_graphics_bits[i * 8 + bit]) {
+        packed |= (uint8_t)(1U << bit);
+      }
+    }
+
+    dest[i] = packed;
+  }
+}
+
 void display_gpu_set_colour(uint8_t x, uint8_t y, uint8_t colour) {
   gpu_pixels[x][y] = colour;
   display_updated = true;

@@ -20,5 +20,10 @@ extern void cpu_6502_set_delayed_nmi();
 extern void cpu_6502_continue(uint16_t pc, uint8_t a, uint8_t ix, uint8_t iy, uint8_t sp, uint8_t psw);
 extern int cpu_6502_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier);
 extern uint16_t cpu_6502_get_pc();
+extern uint8_t cpu_6502_get_a();
+extern uint8_t cpu_6502_get_x();
+extern uint8_t cpu_6502_get_y();
+extern uint8_t cpu_6502_get_sp();
+extern uint8_t cpu_6502_get_psw();
 
 #endif // __CPU_6502_H__

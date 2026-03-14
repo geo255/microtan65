@@ -1,6 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include <ctype.h>
+#include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -77,6 +82,172 @@ SDL_Texture* create_scanline_texture(SDL_Renderer* renderer, int width, int heig
   SDL_Texture* scanline_texture = SDL_CreateTextureFromSurface(renderer, scanline_surface);
   SDL_FreeSurface(scanline_surface);
   return scanline_texture;
+}
+
+
+static bool parse_hex_u16(const char* text, uint16_t* value) {
+  while (isspace((unsigned char)*text)) {
+    text++;
+  }
+
+  if (*text == '$') {
+    text++;
+  } else if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+    text += 2;
+  }
+
+  if (*text == '\0') {
+    return false;
+  }
+
+  errno = 0;
+  char* end = NULL;
+  unsigned long parsed = strtoul(text, &end, 16);
+
+  while (end && isspace((unsigned char)*end)) {
+    end++;
+  }
+
+  if (errno != 0 || !end || *end != '\0' || parsed > 0xFFFFUL) {
+    return false;
+  }
+
+  *value = (uint16_t)parsed;
+  return true;
+}
+
+static bool parse_hex_range(const char* text, uint16_t* start, uint16_t* end) {
+  char buffer[128];
+  snprintf(buffer, sizeof(buffer), "%s", text);
+
+  char* separator = strchr(buffer, '-');
+  if (!separator) {
+    separator = strchr(buffer, ':');
+  }
+
+  if (!separator) {
+    return false;
+  }
+
+  *separator = '\0';
+  separator++;
+
+  uint16_t start_value;
+  uint16_t end_value;
+
+  if (!parse_hex_u16(buffer, &start_value) || !parse_hex_u16(separator, &end_value)) {
+    return false;
+  }
+
+  if (start_value > end_value) {
+    return false;
+  }
+
+  *start = start_value;
+  *end = end_value;
+  return true;
+}
+
+static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
+  const char* menu_items[] = {
+    "Reset system",
+    "Select hex keypad input",
+    "Select ASCII keyboard input",
+    "Load program file (.m65/.hex/.ihx/.ihex)",
+    "Save snapshot (.m65)",
+    "Save Intel HEX address range",
+    "Help",
+    "Cancel"};
+
+  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 8, 0);
+  char file_name[512];
+  char range_input[128];
+  int rv;
+
+  switch (selection) {
+    case 0:
+      system_reset();
+      popup_show(renderer, "System reset.");
+      break;
+
+    case 1:
+      keyboard_use_hex_keypad(true);
+      popup_show(renderer, "Hex keypad input selected.");
+      break;
+
+    case 2:
+      keyboard_use_hex_keypad(false);
+      popup_show(renderer, "ASCII keyboard input selected.");
+      break;
+
+    case 3: {
+      const char* load_extensions[] = {".m65", ".hex", ".ihx", ".ihex"};
+
+      if (popup_file_select(renderer, "Load Program", ".", load_extensions, 4, false, "", file_name, sizeof(file_name))) {
+        rv = system_load_program_file(file_name);
+        if (rv == RV_OK) {
+          popup_show(renderer, "Program loaded.");
+        } else {
+          popup_show(renderer, "Load failed. See terminal output for details.");
+        }
+      }
+      break;
+    }
+
+    case 4: {
+      const char* m65_extensions[] = {".m65"};
+
+      if (popup_file_select(renderer, "Save Snapshot", ".", m65_extensions, 1, true, "snapshot.m65", file_name, sizeof(file_name))) {
+        rv = system_save_m65_file(file_name);
+        if (rv == RV_OK) {
+          popup_show(renderer, "Snapshot saved.");
+        } else {
+          popup_show(renderer, "Save failed. See terminal output for details.");
+        }
+      }
+      break;
+    }
+
+    case 5: {
+      uint16_t start_address;
+      uint16_t end_address;
+      const char* hex_extensions[] = {".hex", ".ihx", ".ihex"};
+
+      if (!popup_file_select(renderer, "Save Intel HEX", ".", hex_extensions, 3, true, "range.hex", file_name, sizeof(file_name))) {
+        break;
+      }
+
+      if (!popup_prompt_input(renderer, "Save Intel HEX", "Address range start-end (hex)", "0200-03FF", range_input, sizeof(range_input))) {
+        break;
+      }
+
+      if (!parse_hex_range(range_input, &start_address, &end_address)) {
+        popup_show(renderer, "Invalid range. Example: 0200-03FF");
+        break;
+      }
+
+      rv = system_save_intel_hex_range(file_name, start_address, end_address);
+      if (rv == RV_OK) {
+        popup_show(renderer, "Intel HEX saved.");
+      } else {
+        popup_show(renderer, "Save failed. See terminal output for details.");
+      }
+      break;
+    }
+    case 6:
+      popup_show(renderer,
+                 "F1: Open menu\n"
+                 "Menu has reset/input/load/save actions\n"
+                 "F2: Select hex keypad input\n"
+                 "F3: Select ASCII keyboard input\n"
+                 "F5: Reset system\n");
+      break;
+
+    default:
+      break;
+  }
+
+  *display_overwritten = true;
 }
 
 int main(int argc, char* argv[]) {
@@ -186,13 +357,7 @@ int main(int argc, char* argv[]) {
           SDL_KeyCode keycode = event.key.keysym.sym;
 
           if (keycode == SDLK_F1) {
-            popup_show(renderer,
-                       "F1: Display this help\n"
-                       "F2: Select hex keypad input\n"
-                       "F3: Select ASCII keyboard input\n"
-                       "F5: Reset system\n"
-                       "\n");
-            display_overwritten = true;
+            show_main_menu(renderer, &display_overwritten);
           } else if (keycode == SDLK_F2) {
             keyboard_use_hex_keypad(true);
           } else if (keycode == SDLK_F3) {
@@ -239,7 +404,3 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
-
-
-
-

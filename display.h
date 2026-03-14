@@ -20,6 +20,7 @@ extern uint8_t* display_get_hires_memory_pointer(int board_index);
 extern void display_set_hires_mode(display_hires_mode_t new_mode);
 extern display_hires_mode_t display_get_hires_mode();
 extern void display_load_chunky_memory(uint8_t* src);
+extern void display_save_chunky_memory(uint8_t* dest);
 extern void display_gpu_set_colour(uint8_t x, uint8_t y, uint8_t colour);
 extern uint8_t display_gpu_get_colour(uint8_t x, uint8_t y);
 extern uint8_t display_hrg_function(uint8_t px, uint8_t py, uint8_t function);

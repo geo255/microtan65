@@ -71,7 +71,7 @@ The Microtan TANBUG and BASIC are case sensitive and commands are all upper case
 
 The numeric keypad "ENTER" key is used as the "LINEFEED" key on the Microtan keyboard.
 
-F1 displays a brief help window F2 emulates the Tangerine Hex Keypad F3 emulated the ASCII keyboard F5 resets the CPU
+F1 opens an in-app menu (reset/input/load/save/help), F2 emulates the Tangerine Hex Keypad, F3 emulates the ASCII keyboard, and F5 resets the CPU.
 
 ## GAME KEYS:
 

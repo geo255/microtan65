@@ -37,6 +37,26 @@ uint16_t cpu_6502_get_pc() {
   return reg_pc;
 }
 
+uint8_t cpu_6502_get_a() {
+  return reg_a;
+}
+
+uint8_t cpu_6502_get_x() {
+  return reg_x;
+}
+
+uint8_t cpu_6502_get_y() {
+  return reg_y;
+}
+
+uint8_t cpu_6502_get_sp() {
+  return reg_sp;
+}
+
+uint8_t cpu_6502_get_psw() {
+  return reg_psw;
+}
+
 /*
 ** Addressing modes
 */

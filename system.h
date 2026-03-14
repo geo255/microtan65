@@ -49,6 +49,8 @@ extern uint8_t* system_get_memory_pointer(uint16_t address);
 extern int system_load_m65_file(char* file_name);
 extern int system_load_intel_hex_file(char* file_name);
 extern int system_load_program_file(char* file_name);
+extern int system_save_m65_file(char* file_name);
+extern int system_save_intel_hex_range(char* file_name, uint16_t start_address, uint16_t end_address);
 extern void system_close();
 
 #endif //__SYSTEM_H__

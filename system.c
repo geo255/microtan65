@@ -23,6 +23,20 @@ static void read_and_ignore(void* ptr, size_t size, size_t count, FILE* file) {
   (void)items_read;
 }
 
+static bool write_and_check(const void* ptr, size_t size, size_t count, FILE* file) {
+  return fwrite(ptr, size, count, file) == count;
+}
+
+static uint8_t intel_hex_checksum(const uint8_t* data, size_t count) {
+  uint32_t sum = 0;
+
+  for (size_t i = 0; i < count; i++) {
+    sum += data[i];
+  }
+
+  return (uint8_t)(0U - (sum & 0xFFU));
+}
+
 static int hex_nibble(char value) {
   if ((value >= '0') && (value <= '9')) {
     return value - '0';
@@ -396,6 +410,84 @@ int system_load_program_file(char* file_name) {
   }
 
   return system_load_m65_file(file_name);
+}
+
+int system_save_m65_file(char* file_name) {
+  FILE* m65_file = fopen(file_name, "wb");
+
+  if (!m65_file) {
+    printf("Error opening [%s]\r\n", file_name);
+    return RV_FILE_OPEN_ERROR;
+  }
+
+  uint8_t* memory = system_get_memory_pointer(0x0000);
+  uint8_t chunky_graphics_memory[64];
+  uint8_t status[7];
+  uint16_t pc = cpu_6502_get_pc();
+
+  display_save_chunky_memory(chunky_graphics_memory);
+  status[0] = (uint8_t)(pc & 0xFF);
+  status[1] = (uint8_t)(pc >> 8);
+  status[2] = cpu_6502_get_psw();
+  status[3] = cpu_6502_get_a();
+  status[4] = cpu_6502_get_x();
+  status[5] = cpu_6502_get_y();
+  status[6] = cpu_6502_get_sp();
+
+  bool ok = write_and_check(memory, 1, 0x2000, m65_file) &&
+            write_and_check(chunky_graphics_memory, 1, sizeof(chunky_graphics_memory), m65_file) &&
+            write_and_check(status, 1, sizeof(status), m65_file);
+
+  fclose(m65_file);
+
+  if (!ok) {
+    return RV_FILE_READ_ERROR;
+  }
+
+  return RV_OK;
+}
+
+int system_save_intel_hex_range(char* file_name, uint16_t start_address, uint16_t end_address) {
+  if (start_address > end_address) {
+    return RV_INVALID_FILE;
+  }
+
+  FILE* hex_file = fopen(file_name, "w");
+
+  if (!hex_file) {
+    printf("Error opening [%s]\r\n", file_name);
+    return RV_FILE_OPEN_ERROR;
+  }
+
+  uint8_t* memory = system_get_memory_pointer(0x0000);
+  uint32_t current = start_address;
+
+  while (current <= end_address) {
+    uint8_t byte_count = (uint8_t)((end_address - current + 1) > 16 ? 16 : (end_address - current + 1));
+    uint8_t record[4 + 16];
+
+    record[0] = byte_count;
+    record[1] = (uint8_t)(current >> 8);
+    record[2] = (uint8_t)(current & 0xFF);
+    record[3] = 0x00;
+
+    for (int i = 0; i < byte_count; i++) {
+      record[4 + i] = memory[current + i];
+    }
+
+    fprintf(hex_file, ":%02X%04X00", byte_count, (unsigned int)current & 0xFFFF);
+
+    for (int i = 0; i < byte_count; i++) {
+      fprintf(hex_file, "%02X", record[4 + i]);
+    }
+
+    fprintf(hex_file, "%02X\n", intel_hex_checksum(record, (size_t)(4 + byte_count)));
+    current += byte_count;
+  }
+
+  fprintf(hex_file, ":00000001FF\n");
+  fclose(hex_file);
+  return RV_OK;
 }
 
 void system_reset() {
