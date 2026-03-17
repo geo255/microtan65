@@ -62,12 +62,13 @@ BRANCH_MNEMONICS = {"BCC", "BCS", "BEQ", "BMI", "BNE", "BPL", "BRA", "BVC", "BVS
 
 
 a = re.ASCII
-LABEL_RE = re.compile(r"^([A-Za-z_\.][A-Za-z0-9_\.]*)\s*:\s*(.*)$", a)
+LABEL_RE = re.compile(r"^([A-Za-z_@\.][A-Za-z0-9_@\.]*)\s*:\s*(.*)$", a)
 ASSIGN_RE = re.compile(r"^([A-Za-z_\.][A-Za-z0-9_\.]*)\s*=\s*(.+)$", a)
 TOKEN_RE = re.compile(r"^([A-Za-z\.][A-Za-z0-9_\.]*)\s*(.*)$", a)
 OPCODE_LINE_RE = re.compile(
     r"\{\s*\d+\s*,\s*([a-z0-9_]+)\s*,\s*([a-z0-9_]+)\s*\},\s*//\s*0x([0-9A-Fa-f]{2})"
 )
+LOCAL_REF_RE = re.compile(r"(?<![A-Za-z0-9_])@([A-Za-z_][A-Za-z0-9_]*)")
 
 
 class AssemblerError(Exception):
@@ -168,6 +169,44 @@ def load_source_lines(input_path: Path, include_stack: Optional[List[Path]] = No
         lines.append(SourceLine(text=raw, file_path=resolved, line_no=line_no))
 
     return lines
+
+def sanitize_scope_name(name: str) -> str:
+    upper = name.upper()
+    return re.sub(r"[^A-Z0-9_]", "_", upper)
+
+
+def mangle_local_label(local_name: str, global_scope: str) -> str:
+    scope = sanitize_scope_name(global_scope)
+    return f"__LOCAL_{scope}_{local_name.upper()}"
+
+
+def resolve_local_label_name(label: str, global_scope: Optional[str], location: str) -> str:
+    if not label.startswith("@"):
+        return label.upper()
+
+    local_name = label[1:]
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", local_name, a):
+        raise AssemblerError(f"{location}: invalid local label {label}")
+
+    if not global_scope:
+        raise AssemblerError(f"{location}: local label {label} has no enclosing global label")
+
+    return mangle_local_label(local_name, global_scope)
+
+
+def resolve_local_refs(expr: str, global_scope: Optional[str], location: str) -> str:
+    if "@" not in expr:
+        return expr
+
+    def repl(m: re.Match[str]) -> str:
+        local_name = m.group(1)
+        if not global_scope:
+            raise AssemblerError(
+                f"{location}: local label reference @{local_name} has no enclosing global label"
+            )
+        return mangle_local_label(local_name, global_scope)
+
+    return LOCAL_REF_RE.sub(repl, expr)
 
 
 def parse_opcode_table(cpu_source: Path) -> Dict[str, Dict[str, int]]:
@@ -437,6 +476,7 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
     symbols: Dict[str, int] = {}
     operations: List[Op] = []
     pc = 0
+    global_scope: Optional[str] = None
 
     for source in lines:
         line_no = source.line_no
@@ -449,10 +489,13 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
             lm = LABEL_RE.match(code)
             if not lm:
                 break
-            label = lm.group(1).upper()
+            raw_label = lm.group(1)
+            label = resolve_local_label_name(raw_label, global_scope, location)
             if label in symbols and symbols[label] != pc:
-                raise AssemblerError(f"{location}: duplicate label {label}")
+                raise AssemblerError(f"{location}: duplicate label {raw_label.upper()}")
             symbols[label] = pc
+            if not raw_label.startswith("@"):
+                global_scope = raw_label.upper()
             code = lm.group(2).strip()
             if not code:
                 break
@@ -462,7 +505,7 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
         am = ASSIGN_RE.match(code)
         if am:
             name = am.group(1).upper()
-            expr = am.group(2).strip()
+            expr = resolve_local_refs(am.group(2).strip(), global_scope, location)
             value, _ = eval_expr(expr, symbols, allow_undefined=True)
             symbols[name] = value & 0xFFFF
             continue
@@ -479,7 +522,8 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
             if directive == ".org":
                 if not remainder:
                     raise AssemblerError(f"{location}: .org requires an expression")
-                value, _ = eval_expr(remainder, symbols, allow_undefined=True)
+                org_expr = resolve_local_refs(remainder, global_scope, location)
+                value, _ = eval_expr(org_expr, symbols, allow_undefined=True)
                 if not (0 <= value <= 0xFFFF):
                     raise AssemblerError(f"{location}: .org out of range")
                 pc = value
@@ -492,12 +536,21 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
                 name = parts[0].strip().upper()
                 if not re.match(r"^[A-Za-z_\.][A-Za-z0-9_\.]*$", name, a):
                     raise AssemblerError(f"{location}: invalid symbol name {name}")
-                value, _ = eval_expr(parts[1], symbols, allow_undefined=True)
+                expr = resolve_local_refs(parts[1], global_scope, location)
+                value, _ = eval_expr(expr, symbols, allow_undefined=True)
                 symbols[name] = value & 0xFFFF
                 continue
 
             if directive in {".byte", ".word", ".text", ".ascii", ".fill"}:
-                args = split_csv(remainder)
+                args_raw = split_csv(remainder)
+                args: List[str] = []
+                for part in args_raw:
+                    stripped = part.strip()
+                    if stripped.startswith(('"', "'")):
+                        args.append(stripped)
+                    else:
+                        args.append(resolve_local_refs(stripped, global_scope, location))
+
                 if directive == ".fill" and len(args) not in {1, 2}:
                     raise AssemblerError(f"{location}: .fill requires count[, value]")
                 if directive in {".byte", ".word"} and not args:
@@ -508,18 +561,16 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
                 size = 0
                 if directive == ".byte":
                     for part in args:
-                        stripped = part.strip()
-                        if stripped.startswith(('"', "'")):
-                            size += len(parse_string_literal(stripped))
+                        if part.startswith(('"', "'")):
+                            size += len(parse_string_literal(part))
                         else:
                             size += 1
                 elif directive == ".word":
                     size = 2 * len(args)
                 elif directive in {".text", ".ascii"}:
                     for part in args:
-                        stripped = part.strip()
-                        if stripped.startswith(('"', "'")):
-                            size += len(parse_string_literal(stripped))
+                        if part.startswith(('"', "'")):
+                            size += len(parse_string_literal(part))
                         else:
                             size += 1
                 elif directive == ".fill":
@@ -545,7 +596,8 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
             raise AssemblerError(f"{location}: unknown directive {directive}")
 
         mnemonic = token.upper()
-        mode, operand_expr = choose_mode(mnemonic, remainder if remainder else None, opcode_map, symbols, allow_undefined=True)
+        resolved_operand = resolve_local_refs(remainder, global_scope, location) if remainder else None
+        mode, operand_expr = choose_mode(mnemonic, resolved_operand, opcode_map, symbols, allow_undefined=True)
         size = MODE_SIZE[mode]
         operations.append(
             Op(

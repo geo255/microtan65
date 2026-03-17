@@ -52,6 +52,23 @@ Expressions support decimal plus these common formats:
 - Branch instructions use relative offsets and are range-checked.
 - Symbol names are treated case-insensitively.
 
+### Local Labels
+
+- Local labels use `@name:` syntax and are scoped to the most recent non-local label.
+- Local references use `@name`.
+- Local labels can be reused under different global labels.
+
+```asm
+Main:
+@loop:
+    dex
+    bne @loop
+
+Other:
+@loop:
+    iny
+    bne @loop
+```
 ## Tables
 
 Use the data directives to build lookup tables and jump tables:
