@@ -30,6 +30,15 @@ Default output format is Intel HEX (`-f hex`).
 - `.word <items...>`: emit 16-bit little-endian words
 - `.text <items...>` / `.ascii <items...>`: emit text bytes
 - `.fill count[, value]`: emit repeated byte values
+- `.include "path"`: include another source file
+
+### Include Notes
+
+- Include paths are resolved relative to the file that contains the `.include` line.
+- Nested includes are supported.
+- Include cycles are detected and reported as an error.
+
+## Expressions
 
 Expressions support decimal plus these common formats:
 
@@ -42,6 +51,18 @@ Expressions support decimal plus these common formats:
 - Labels are supported (`label:`), including forward references.
 - Branch instructions use relative offsets and are range-checked.
 - Symbol names are treated case-insensitively.
+
+## Tables
+
+Use the data directives to build lookup tables and jump tables:
+
+```asm
+BitMaskTable:
+    .byte $01, $02, $04, $08, $10, $20, $40, $80
+
+JumpTable:
+    .word FuncA, FuncB, FuncC
+```
 
 ## Addressing Syntax
 
@@ -56,6 +77,10 @@ Use standard 6502 syntax, for example:
 - `JMP ($1234,X)`
 
 The assembler picks zero-page vs absolute forms automatically when both are available.
+
+## Errors
+
+Assembler errors are reported with source location (`file:line`) where possible, including when code comes from included files.
 
 ## Output Notes
 
