@@ -74,6 +74,13 @@ class AssemblerError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class SourceLine:
+    text: str
+    file_path: Path
+    line_no: int
+
+
 @dataclass
 class Op:
     kind: str
@@ -85,6 +92,7 @@ class Op:
     operand: Optional[str] = None
     directive: Optional[str] = None
     args: Optional[List[str]] = None
+    source: Optional[str] = None
 
 
 class SymbolLookup(dict):
@@ -101,6 +109,65 @@ class SymbolLookup(dict):
         if self.allow_undefined:
             return 0
         raise AssemblerError(f"Undefined symbol: {key}")
+
+
+def format_location(file_path: Path, line_no: int) -> str:
+    return f"{file_path}:{line_no}"
+
+
+def parse_include_path(arg_text: str, file_path: Path, line_no: int) -> Path:
+    location = format_location(file_path, line_no)
+    text = arg_text.strip()
+    if not text:
+        raise AssemblerError(f"{location}: .include requires a quoted path")
+
+    try:
+        include_name = ast.literal_eval(text)
+    except Exception as exc:
+        raise AssemblerError(f"{location}: invalid .include path {arg_text!r}") from exc
+
+    if not isinstance(include_name, str) or not include_name:
+        raise AssemblerError(f"{location}: .include path must be a non-empty string")
+
+    include_path = Path(include_name)
+    if not include_path.is_absolute():
+        include_path = (file_path.parent / include_path).resolve()
+    else:
+        include_path = include_path.resolve()
+
+    if not include_path.is_file():
+        raise AssemblerError(f"{location}: include file not found: {include_path}")
+
+    return include_path
+
+
+def load_source_lines(input_path: Path, include_stack: Optional[List[Path]] = None) -> List[SourceLine]:
+    resolved = input_path.resolve()
+    stack = include_stack or []
+
+    if resolved in stack:
+        cycle = " -> ".join(str(p) for p in stack + [resolved])
+        raise AssemblerError(f"Include cycle detected: {cycle}")
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssemblerError(f"Unable to read source file: {resolved}") from exc
+
+    lines: List[SourceLine] = []
+    for line_no, raw in enumerate(text.splitlines(), 1):
+        code = raw.split(";", 1)[0].strip()
+        if code:
+            tm = TOKEN_RE.match(code)
+            if tm and tm.group(1).lower() == ".include":
+                remainder = tm.group(2).strip() if tm.group(2) else ""
+                include_path = parse_include_path(remainder, resolved, line_no)
+                lines.extend(load_source_lines(include_path, stack + [resolved]))
+                continue
+
+        lines.append(SourceLine(text=raw, file_path=resolved, line_no=line_no))
+
+    return lines
 
 
 def parse_opcode_table(cpu_source: Path) -> Dict[str, Dict[str, int]]:
@@ -366,13 +433,15 @@ def parse_string_literal(token: str) -> bytes:
     raise AssemblerError(f"Invalid string literal: {token}")
 
 
-def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List[Op], Dict[str, int]]:
+def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List[Op], Dict[str, int]]:
     symbols: Dict[str, int] = {}
     operations: List[Op] = []
     pc = 0
 
-    for line_no, raw in enumerate(lines, 1):
-        code = raw.split(";", 1)[0].strip()
+    for source in lines:
+        line_no = source.line_no
+        location = format_location(source.file_path, line_no)
+        code = source.text.split(";", 1)[0].strip()
         if not code:
             continue
 
@@ -382,7 +451,7 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
                 break
             label = lm.group(1).upper()
             if label in symbols and symbols[label] != pc:
-                raise AssemblerError(f"Line {line_no}: duplicate label {label}")
+                raise AssemblerError(f"{location}: duplicate label {label}")
             symbols[label] = pc
             code = lm.group(2).strip()
             if not code:
@@ -400,7 +469,7 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
 
         tm = TOKEN_RE.match(code)
         if not tm:
-            raise AssemblerError(f"Line {line_no}: cannot parse line")
+            raise AssemblerError(f"{location}: cannot parse line")
 
         token = tm.group(1)
         remainder = tm.group(2).strip() if tm.group(2) else ""
@@ -409,20 +478,20 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
             directive = token.lower()
             if directive == ".org":
                 if not remainder:
-                    raise AssemblerError(f"Line {line_no}: .org requires an expression")
+                    raise AssemblerError(f"{location}: .org requires an expression")
                 value, _ = eval_expr(remainder, symbols, allow_undefined=True)
                 if not (0 <= value <= 0xFFFF):
-                    raise AssemblerError(f"Line {line_no}: .org out of range")
+                    raise AssemblerError(f"{location}: .org out of range")
                 pc = value
                 continue
 
             if directive == ".equ":
                 parts = split_csv(remainder)
                 if len(parts) != 2:
-                    raise AssemblerError(f"Line {line_no}: .equ requires name, expression")
+                    raise AssemblerError(f"{location}: .equ requires name, expression")
                 name = parts[0].strip().upper()
                 if not re.match(r"^[A-Za-z_\.][A-Za-z0-9_\.]*$", name, a):
-                    raise AssemblerError(f"Line {line_no}: invalid symbol name {name}")
+                    raise AssemblerError(f"{location}: invalid symbol name {name}")
                 value, _ = eval_expr(parts[1], symbols, allow_undefined=True)
                 symbols[name] = value & 0xFFFF
                 continue
@@ -430,11 +499,11 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
             if directive in {".byte", ".word", ".text", ".ascii", ".fill"}:
                 args = split_csv(remainder)
                 if directive == ".fill" and len(args) not in {1, 2}:
-                    raise AssemblerError(f"Line {line_no}: .fill requires count[, value]")
+                    raise AssemblerError(f"{location}: .fill requires count[, value]")
                 if directive in {".byte", ".word"} and not args:
-                    raise AssemblerError(f"Line {line_no}: {directive} requires data")
+                    raise AssemblerError(f"{location}: {directive} requires data")
                 if directive in {".text", ".ascii"} and not args:
-                    raise AssemblerError(f"Line {line_no}: {directive} requires data")
+                    raise AssemblerError(f"{location}: {directive} requires data")
 
                 size = 0
                 if directive == ".byte":
@@ -456,14 +525,24 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
                 elif directive == ".fill":
                     count, _ = eval_expr(args[0], symbols, allow_undefined=True)
                     if count < 0:
-                        raise AssemblerError(f"Line {line_no}: .fill count must be >= 0")
+                        raise AssemblerError(f"{location}: .fill count must be >= 0")
                     size = count
 
-                operations.append(Op(kind="directive", line_no=line_no, address=pc, size=size, directive=directive, args=args))
+                operations.append(
+                    Op(
+                        kind="directive",
+                        line_no=line_no,
+                        address=pc,
+                        size=size,
+                        directive=directive,
+                        args=args,
+                        source=str(source.file_path),
+                    )
+                )
                 pc += size
                 continue
 
-            raise AssemblerError(f"Line {line_no}: unknown directive {directive}")
+            raise AssemblerError(f"{location}: unknown directive {directive}")
 
         mnemonic = token.upper()
         mode, operand_expr = choose_mode(mnemonic, remainder if remainder else None, opcode_map, symbols, allow_undefined=True)
@@ -477,15 +556,21 @@ def pass1(lines: List[str], opcode_map: Dict[str, Dict[str, int]]) -> Tuple[List
                 mnemonic=mnemonic,
                 mode=mode,
                 operand=operand_expr,
+                source=str(source.file_path),
             )
         )
         pc += size
 
     return operations, symbols
 
-
 def encode_word(value: int) -> Tuple[int, int]:
     return value & 0xFF, (value >> 8) & 0xFF
+
+
+def op_location(op: Op) -> str:
+    if op.source:
+        return f"{op.source}:{op.line_no}"
+    return f"Line {op.line_no}"
 
 
 def encode_instruction(op: Op, symbols: Dict[str, int], opcode_map: Dict[str, Dict[str, int]]) -> List[int]:
@@ -498,31 +583,31 @@ def encode_instruction(op: Op, symbols: Dict[str, int], opcode_map: Dict[str, Di
         return out
 
     if op.operand is None:
-        raise AssemblerError(f"Line {op.line_no}: missing operand")
+        raise AssemblerError(f"{op_location(op)}: missing operand")
 
     value, _ = eval_expr(op.operand, symbols, allow_undefined=False)
 
     if op.mode == "rel":
         offset = value - (op.address + 2)
         if not (-128 <= offset <= 127):
-            raise AssemblerError(f"Line {op.line_no}: branch target out of range ({offset})")
+            raise AssemblerError(f"{op_location(op)}: branch target out of range ({offset})")
         out.append(offset & 0xFF)
         return out
 
     if op.mode in {"imm", "zp", "zpx", "zpy", "indx", "indy", "zpi"}:
         if not (-128 <= value <= 0xFF):
-            raise AssemblerError(f"Line {op.line_no}: value out of byte range: {value}")
+            raise AssemblerError(f"{op_location(op)}: value out of byte range: {value}")
         out.append(value & 0xFF)
         return out
 
     if op.mode in {"abs", "absx", "absy", "ind", "absindx"}:
         if not (-32768 <= value <= 0xFFFF):
-            raise AssemblerError(f"Line {op.line_no}: value out of word range: {value}")
+            raise AssemblerError(f"{op_location(op)}: value out of word range: {value}")
         lo, hi = encode_word(value)
         out.extend([lo, hi])
         return out
 
-    raise AssemblerError(f"Line {op.line_no}: unsupported mode {op.mode}")
+    raise AssemblerError(f"{op_location(op)}: unsupported mode {op.mode}")
 
 
 def assemble_pass2(operations: List[Op], symbols: Dict[str, int], opcode_map: Dict[str, Dict[str, int]]) -> Dict[int, int]:
@@ -552,7 +637,7 @@ def assemble_pass2(operations: List[Op], symbols: Dict[str, int], opcode_map: Di
                 else:
                     value, _ = eval_expr(stripped, symbols, allow_undefined=False)
                     if not (0 <= value <= 0xFF):
-                        raise AssemblerError(f"Line {op.line_no}: .byte value out of range")
+                        raise AssemblerError(f"{op_location(op)}: .byte value out of range")
                     memory[addr] = value & 0xFF
                     addr += 1
             continue
@@ -561,7 +646,7 @@ def assemble_pass2(operations: List[Op], symbols: Dict[str, int], opcode_map: Di
             for part in args:
                 value, _ = eval_expr(part, symbols, allow_undefined=False)
                 if not (0 <= value <= 0xFFFF):
-                    raise AssemblerError(f"Line {op.line_no}: .word value out of range")
+                    raise AssemblerError(f"{op_location(op)}: .word value out of range")
                 lo, hi = encode_word(value)
                 memory[addr] = lo
                 memory[addr + 1] = hi
@@ -579,7 +664,7 @@ def assemble_pass2(operations: List[Op], symbols: Dict[str, int], opcode_map: Di
                 else:
                     value, _ = eval_expr(stripped, symbols, allow_undefined=False)
                     if not (0 <= value <= 0xFF):
-                        raise AssemblerError(f"Line {op.line_no}: text data value out of range")
+                        raise AssemblerError(f"{op_location(op)}: text data value out of range")
                     memory[addr] = value & 0xFF
                     addr += 1
             continue
@@ -590,9 +675,9 @@ def assemble_pass2(operations: List[Op], symbols: Dict[str, int], opcode_map: Di
             if len(args) == 2:
                 fill_value, _ = eval_expr(args[1], symbols, allow_undefined=False)
             if count < 0:
-                raise AssemblerError(f"Line {op.line_no}: .fill count must be >= 0")
+                raise AssemblerError(f"{op_location(op)}: .fill count must be >= 0")
             if not (0 <= fill_value <= 0xFF):
-                raise AssemblerError(f"Line {op.line_no}: .fill value out of range")
+                raise AssemblerError(f"{op_location(op)}: .fill value out of range")
             for _ in range(count):
                 memory[addr] = fill_value
                 addr += 1
@@ -658,9 +743,8 @@ def default_output_path(input_path: Path, fmt: str) -> Path:
 def run(input_path: Path, output_path: Path, fmt: str) -> None:
     cpu_source = Path(__file__).resolve().parent.parent / "cpu_6502.c"
     opcode_map = parse_opcode_table(cpu_source)
-
-    lines = input_path.read_text(encoding="utf-8").splitlines()
-    operations, symbols = pass1(lines, opcode_map)
+    source_lines = load_source_lines(input_path)
+    operations, symbols = pass1(source_lines, opcode_map)
     memory = assemble_pass2(operations, symbols, opcode_map)
 
     if fmt == "hex":
@@ -697,5 +781,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
