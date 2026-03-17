@@ -137,3 +137,38 @@ Assembler errors are reported with source location (`file:line`) where possible,
 - `hex`: writes Intel HEX records.
 - `bin`: writes a contiguous binary image from the lowest emitted address to the highest.
 
+
+## Microtan Hardware Labels
+
+A ready-made include file for AY8910 and 6522 labels is provided at:
+
+- `examples/includes/microtan_hw_labels.inc`
+
+It defines:
+
+- TANBUG/XBUG zero-page labels (`ZP_*`)
+- Microtan manual zero-page labels (`NULL`, `ICHAR`, `VDUIND`, `PCLBCK`, `BPTLO`, etc.)
+- ROM region labels (`*_ROM_START`, `*_ROM_END`)
+- TANBUG routine entry labels (`TANBUG_*`)
+- AY chip interface addresses (`AY1_ADDR`, `AY1_DATA`, `AY2_ADDR`, `AY2_DATA`)
+- AY register indices (`AY_REG_*`)
+- VIA register offsets (`VIA_*`)
+- Absolute VIA register labels for both chips (`VIA1_*`, `VIA2_*`)
+
+Example:
+
+```asm
+.include "../includes/microtan_hw_labels.inc"
+
+.org $0400
+Start:
+    lda #$ff
+    sta VIA1_DDRB
+
+    lda #AY_REG_ENABLE
+    sta AY1_ADDR
+    lda #$3f
+    sta AY1_DATA
+
+    brk
+```
