@@ -299,6 +299,8 @@ def normalize_expression(expr: str) -> str:
     expr = expr.strip()
     expr = re.sub(r"\$([0-9A-Fa-f]+)", r"0x\1", expr)
     expr = re.sub(r"%([01_]+)", lambda m: "0b" + m.group(1).replace("_", ""), expr)
+    # Assembly arithmetic uses integer division semantics.
+    expr = re.sub(r"(?<!/)/(?!/)", "//", expr)
 
     def char_repl(m: re.Match[str]) -> str:
         literal = m.group(0)
@@ -325,7 +327,6 @@ def eval_expr(expr: str, symbols: Dict[str, int], allow_undefined: bool) -> Tupl
         raise AssemblerError(f"Expression did not evaluate to integer: {expr}")
 
     return int(value), lookup.missing_symbol
-
 
 def parse_operand_shape(operand: Optional[str]) -> Tuple[str, Optional[str]]:
     if operand is None:

@@ -1,6 +1,9 @@
 .vscode/
 .oldgit/
 
+# libraries
+lib/
+
 # Build artifacts
 *.o
 microtan65

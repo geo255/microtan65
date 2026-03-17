@@ -46,6 +46,18 @@ Expressions support decimal plus these common formats:
 - Binary: `%10101010`
 - Character literals: `'A'`
 
+Supported operators (integer arithmetic):
+
+- `+`, `-`, `*`, `/`, `%`
+- `<<`, `>>`
+- `&`, `|`, `^`, `~`
+- Parentheses: `( ... )`
+
+Notes:
+
+- `/` uses integer division semantics.
+- Expressions can be used in directives and instruction operands.
+
 ## Labels and Branches
 
 - Labels are supported (`label:`), including forward references.
@@ -69,6 +81,7 @@ Other:
     iny
     bne @loop
 ```
+
 ## Tables
 
 Use the data directives to build lookup tables and jump tables:
