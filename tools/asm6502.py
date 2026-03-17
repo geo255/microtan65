@@ -95,6 +95,16 @@ class Op:
     args: Optional[List[str]] = None
     source: Optional[str] = None
 
+@dataclass
+class ConditionalFrame:
+    parent_active: bool
+    this_active: bool
+    branch_taken: bool
+    seen_else: bool = False
+
+
+def is_currently_active(stack: List[ConditionalFrame]) -> bool:
+    return stack[-1].this_active if stack else True
 
 class SymbolLookup(dict):
     def __init__(self, symbols: Dict[str, int], allow_undefined: bool):
@@ -478,12 +488,108 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
     operations: List[Op] = []
     pc = 0
     global_scope: Optional[str] = None
+    cond_stack: List[ConditionalFrame] = []
 
     for source in lines:
         line_no = source.line_no
         location = format_location(source.file_path, line_no)
         code = source.text.split(";", 1)[0].strip()
         if not code:
+            continue
+
+        # Handle conditional-assembly directives regardless of current active state.
+        lead = TOKEN_RE.match(code)
+        if lead and lead.group(1).startswith("."):
+            directive = lead.group(1).lower()
+            remainder = lead.group(2).strip() if lead.group(2) else ""
+
+            if directive == ".if":
+                if not remainder:
+                    raise AssemblerError(f"{location}: .if requires an expression")
+                parent_active = is_currently_active(cond_stack)
+                cond = False
+                if parent_active:
+                    expr = resolve_local_refs(remainder, global_scope, location)
+                    cond_value, _ = eval_expr(expr, symbols, allow_undefined=False)
+                    cond = cond_value != 0
+                this_active = parent_active and cond
+                cond_stack.append(
+                    ConditionalFrame(
+                        parent_active=parent_active,
+                        this_active=this_active,
+                        branch_taken=this_active,
+                        seen_else=False,
+                    )
+                )
+                continue
+
+            if directive in {".ifdef", ".ifndef"}:
+                if not remainder:
+                    raise AssemblerError(f"{location}: {directive} requires a symbol name")
+                parent_active = is_currently_active(cond_stack)
+                cond = False
+                if parent_active:
+                    symbol_name = resolve_local_refs(remainder.strip(), global_scope, location).upper()
+                    if not re.match(r"^[A-Za-z_\.][A-Za-z0-9_\.]*$", symbol_name, a):
+                        raise AssemblerError(f"{location}: invalid symbol name {symbol_name}")
+                    defined = symbol_name in symbols
+                    cond = defined if directive == ".ifdef" else (not defined)
+                this_active = parent_active and cond
+                cond_stack.append(
+                    ConditionalFrame(
+                        parent_active=parent_active,
+                        this_active=this_active,
+                        branch_taken=this_active,
+                        seen_else=False,
+                    )
+                )
+                continue
+
+            if directive in {".elif", ".elseif"}:
+                if not cond_stack:
+                    raise AssemblerError(f"{location}: {directive} without matching .if")
+                if not remainder:
+                    raise AssemblerError(f"{location}: {directive} requires an expression")
+
+                frame = cond_stack[-1]
+                if frame.seen_else:
+                    raise AssemblerError(f"{location}: {directive} after .else")
+
+                if not frame.parent_active or frame.branch_taken:
+                    frame.this_active = False
+                else:
+                    expr = resolve_local_refs(remainder, global_scope, location)
+                    cond_value, _ = eval_expr(expr, symbols, allow_undefined=False)
+                    cond = cond_value != 0
+                    frame.this_active = cond
+                    if cond:
+                        frame.branch_taken = True
+
+                cond_stack[-1] = frame
+                continue
+
+            if directive == ".else":
+                if not cond_stack:
+                    raise AssemblerError(f"{location}: .else without matching .if")
+
+                frame = cond_stack[-1]
+                if frame.seen_else:
+                    raise AssemblerError(f"{location}: duplicate .else in conditional block")
+
+                frame.seen_else = True
+                frame.this_active = frame.parent_active and (not frame.branch_taken)
+                frame.branch_taken = frame.branch_taken or frame.this_active
+                cond_stack[-1] = frame
+                continue
+
+            if directive == ".endif":
+                if not cond_stack:
+                    raise AssemblerError(f"{location}: .endif without matching .if")
+                cond_stack.pop()
+                continue
+
+        # Skip non-conditional content in inactive conditional branches.
+        if not is_currently_active(cond_stack):
             continue
 
         while True:
@@ -613,6 +719,9 @@ def pass1(lines: List[SourceLine], opcode_map: Dict[str, Dict[str, int]]) -> Tup
             )
         )
         pc += size
+
+    if cond_stack:
+        raise AssemblerError("Unterminated conditional block: missing .endif")
 
     return operations, symbols
 

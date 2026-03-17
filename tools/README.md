@@ -31,12 +31,32 @@ Default output format is Intel HEX (`-f hex`).
 - `.text <items...>` / `.ascii <items...>`: emit text bytes
 - `.fill count[, value]`: emit repeated byte values
 - `.include "path"`: include another source file
+- `.if <expr>` / `.elif <expr>` / `.else` / `.endif`: conditional assembly
+- `.ifdef <symbol>` / `.ifndef <symbol>`: symbol-defined conditionals
 
 ### Include Notes
 
 - Include paths are resolved relative to the file that contains the `.include` line.
 - Nested includes are supported.
 - Include cycles are detected and reported as an error.
+
+### Conditional Assembly
+
+- `.if <expr>` evaluates an expression; non-zero is true (use `==` for equality, not `=`).
+- `.elif <expr>` and `.else` select alternate branches.
+- `.ifdef <symbol>` is true when a symbol is already defined.
+- `.ifndef <symbol>` is true when a symbol is not defined.
+- Blocks can be nested.
+
+```asm
+.if TARGET == 1
+    lda #$01
+.elif TARGET == 2
+    lda #$02
+.else
+    lda #$00
+.endif
+```
 
 ## Expressions
 
@@ -116,3 +136,4 @@ Assembler errors are reported with source location (`file:line`) where possible,
 
 - `hex`: writes Intel HEX records.
 - `bin`: writes a contiguous binary image from the lowest emitted address to the highest.
+
