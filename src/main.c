@@ -24,12 +24,23 @@
 
 #define MICROTAN_DEFAULT_CLOCK_FREQUENCY 750000
 #define LOOP_EXECUTE_TIME_MS             20
+#define MICROTAN_CLOCK_OPTION_COUNT      4
 
 const char* SETTINGS_FILE = "microtan_settings.txt";
+
+static const int MICROTAN_CLOCK_OPTIONS[MICROTAN_CLOCK_OPTION_COUNT] = {
+  750000,
+  1500000,
+  3000000,
+  6000000};
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+
+static bool is_supported_clock_frequency(int clock_frequency);
+static int clock_frequency_to_menu_index(int clock_frequency);
+static const char* clock_frequency_name(int clock_frequency);
 
 static bool directory_exists(const char* path) {
   struct stat st;
@@ -95,7 +106,7 @@ static void update_file_dialog_directory(const char* selected_file, char* output
   output[directory_length] = '\0';
 }
 
-void save_window_settings(SDL_Window* window, const char* file_dialog_directory) {
+void save_window_settings(SDL_Window* window, int cpu_clock_frequency, const char* file_dialog_directory) {
   int x, y, width, height;
   SDL_GetWindowSize(window, &width, &height);
   SDL_GetWindowPosition(window, &x, &y);
@@ -103,20 +114,27 @@ void save_window_settings(SDL_Window* window, const char* file_dialog_directory)
 
   if (file) {
     const char* save_directory = (file_dialog_directory && (*file_dialog_directory != '\0')) ? file_dialog_directory : ".";
-    fprintf(file, "%d %d %d %d %d\n%s\n", x, y, width, height, (int)display_get_hires_mode(), save_directory);
+    fprintf(file, "%d %d %d %d %d %d\n%s\n", x, y, width, height, (int)display_get_hires_mode(), cpu_clock_frequency, save_directory);
     fclose(file);
   }
 }
 
-void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode, char* file_dialog_directory, size_t file_dialog_directory_size) {
+void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode, int* cpu_clock_frequency, char* file_dialog_directory, size_t file_dialog_directory_size) {
   FILE* file = fopen(SETTINGS_FILE, "r");
+  char geometry_line[256];
   char path_line[PATH_MAX];
   *display_mode = DISPLAY_HIRES_MODE_NONE;
+  *cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
   choose_default_file_directory(file_dialog_directory, file_dialog_directory_size);
 
   if (file) {
     int display_mode_raw = 0;
-    int values_read = fscanf(file, "%d %d %d %d %d", x, y, width, height, &display_mode_raw);
+    int cpu_clock_frequency_raw = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
+    int values_read = 0;
+
+    if (fgets(geometry_line, sizeof(geometry_line), file) != NULL) {
+      values_read = sscanf(geometry_line, "%d %d %d %d %d %d", x, y, width, height, &display_mode_raw, &cpu_clock_frequency_raw);
+    }
 
     if (values_read < 4) {
       *x = SDL_WINDOWPOS_CENTERED;
@@ -125,9 +143,8 @@ void load_window_settings(int* x, int* y, int* width, int* height, display_hires
       *display_mode = (display_hires_mode_t)display_mode_raw;
     }
 
-    // Consume remainder of line with geometry/mode fields.
-    if (fgets(path_line, sizeof(path_line), file) == NULL) {
-      path_line[0] = '\0';
+    if ((values_read >= 6) && is_supported_clock_frequency(cpu_clock_frequency_raw)) {
+      *cpu_clock_frequency = cpu_clock_frequency_raw;
     }
 
     // Optional persisted file-dialog directory line.
@@ -252,7 +269,41 @@ static const char* display_mode_name(display_hires_mode_t mode) {
   }
 }
 
-static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, char* file_dialog_directory, size_t file_dialog_directory_size) {
+static bool is_supported_clock_frequency(int clock_frequency) {
+  for (int i = 0; i < MICROTAN_CLOCK_OPTION_COUNT; i++) {
+    if (MICROTAN_CLOCK_OPTIONS[i] == clock_frequency) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static int clock_frequency_to_menu_index(int clock_frequency) {
+  for (int i = 0; i < MICROTAN_CLOCK_OPTION_COUNT; i++) {
+    if (MICROTAN_CLOCK_OPTIONS[i] == clock_frequency) {
+      return i;
+    }
+  }
+
+  return 0;
+}
+
+static const char* clock_frequency_name(int clock_frequency) {
+  switch (clock_frequency) {
+    case 6000000:
+      return "6 MHz";
+    case 3000000:
+      return "3 MHz";
+    case 1500000:
+      return "1.5 MHz";
+    case 750000:
+    default:
+      return "750 kHz";
+  }
+}
+
+static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, int* cpu_clock_frequency, char* file_dialog_directory, size_t file_dialog_directory_size) {
   const char* menu_items[] = {
     "Reset system",
     "Select hex keypad input",
@@ -261,10 +312,11 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, ch
     "Save snapshot (.m65)",
     "Save Intel HEX address range",
     "Display options",
+    "CPU clock options",
     "Help",
     "Cancel"};
 
-  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 9, 0);
+  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 10, 0);
   char file_name[PATH_MAX];
   char range_input[128];
   int rv;
@@ -368,11 +420,31 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, ch
       break;
     }
 
-    case 7:
+    case 7: {
+      const char* clock_items[] = {
+        "750 kHz (original)",
+        "1.5 MHz",
+        "3 MHz",
+        "6 MHz",
+        "Cancel"};
+      int current_index = clock_frequency_to_menu_index(*cpu_clock_frequency);
+      int clock_selection = popup_menu_select(renderer, "CPU Clock", clock_items, 5, current_index);
+
+      if ((clock_selection >= 0) && (clock_selection < MICROTAN_CLOCK_OPTION_COUNT)) {
+        *cpu_clock_frequency = MICROTAN_CLOCK_OPTIONS[clock_selection];
+        char message[96];
+        snprintf(message, sizeof(message), "CPU clock: %s", clock_frequency_name(*cpu_clock_frequency));
+        popup_show(renderer, message);
+      }
+      break;
+    }
+
+    case 8:
       popup_show(renderer,
                  "F1: Open menu\n"
                  "Menu has reset/input/load/save actions\n"
                  "Menu -> Display options: Text/Tangerine/GPU\n"
+                 "Menu -> CPU clock options: 750k/1.5M/3M/6M\n"
                  "F2: Select hex keypad input\n"
                  "F3: Select ASCII keyboard input\n"
                  "F5: Reset system\n");
@@ -406,8 +478,9 @@ int main(int argc, char* argv[]) {
   SDL_Init(SDL_INIT_VIDEO);
   int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED, width = DISPLAY_WIDTH, height = DISPLAY_HEIGHT;
   display_hires_mode_t saved_display_mode = DISPLAY_HIRES_MODE_NONE;
+  int cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
   char file_dialog_directory[PATH_MAX];
-  load_window_settings(&x, &y, &width, &height, &saved_display_mode, file_dialog_directory, sizeof(file_dialog_directory));
+  load_window_settings(&x, &y, &width, &height, &saved_display_mode, &cpu_clock_frequency, file_dialog_directory, sizeof(file_dialog_directory));
   display_set_hires_mode(saved_display_mode);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
@@ -424,7 +497,7 @@ int main(int argc, char* argv[]) {
   while (is_running) {
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     // Execute LOOP_EXECUTE_TIME_MS's worth of instructions
-    cpu_6502_execute(MICROTAN_DEFAULT_CLOCK_FREQUENCY * LOOP_EXECUTE_TIME_MS / 1000);
+    cpu_6502_execute(cpu_clock_frequency * LOOP_EXECUTE_TIME_MS / 1000);
 
     // If the display has been updated, re-render the window
     if ((display_updated_event()) || (display_overwritten)) {
@@ -495,7 +568,7 @@ int main(int argc, char* argv[]) {
           SDL_KeyCode keycode = event.key.keysym.sym;
 
           if (keycode == SDLK_F1) {
-            show_main_menu(renderer, &display_overwritten, file_dialog_directory, sizeof(file_dialog_directory));
+            show_main_menu(renderer, &display_overwritten, &cpu_clock_frequency, file_dialog_directory, sizeof(file_dialog_directory));
           } else if (keycode == SDLK_F2) {
             keyboard_use_hex_keypad(true);
           } else if (keycode == SDLK_F3) {
@@ -533,7 +606,7 @@ int main(int argc, char* argv[]) {
     }
   } // main loop
 
-  save_window_settings(window, file_dialog_directory);
+  save_window_settings(window, cpu_clock_frequency, file_dialog_directory);
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
