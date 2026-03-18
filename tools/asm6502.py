@@ -903,7 +903,10 @@ def default_output_path(input_path: Path, fmt: str) -> Path:
 
 
 def run(input_path: Path, output_path: Path, fmt: str) -> None:
-    cpu_source = Path(__file__).resolve().parent.parent / "cpu_6502.c"
+    repo_root = Path(__file__).resolve().parent.parent
+    cpu_source = repo_root / "src" / "cpu_6502.c"
+    if not cpu_source.exists():
+        cpu_source = repo_root / "cpu_6502.c"
     opcode_map = parse_opcode_table(cpu_source)
     source_lines = load_source_lines(input_path)
     operations, symbols = pass1(source_lines, opcode_map)

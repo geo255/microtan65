@@ -2,7 +2,7 @@
 
 `asm6502.py` is a 2-pass 6502/65C02 assembler for `microtan65`.
 
-It reads opcode/mode information from `cpu_6502.c`, so generated machine code matches the emulator instruction table.
+It reads opcode/mode information from `src/cpu_6502.c` (falls back to `cpu_6502.c` for older layouts), so generated machine code matches the emulator instruction table.
 
 ## Usage
 

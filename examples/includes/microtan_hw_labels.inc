@@ -201,3 +201,16 @@
 .equ VIA2_IFR,   VIA2_BASE + VIA_IFR
 .equ VIA2_IER,   VIA2_BASE + VIA_IER
 .equ VIA2_ORA2,  VIA2_BASE + VIA_ORA2
+
+; ---------------------------------------------------------------------------
+; Tangerine hi-res graphics board (as emulated in microtan65)
+; ---------------------------------------------------------------------------
+.equ HIRES_BASE,         $8000
+.equ HIRES_END,          $9FFF
+.equ HIRES_BANK_SELECT,  $FFFF
+
+; Values written to HIRES_BANK_SELECT
+.equ HIRES_BANK_RED,       $01
+.equ HIRES_BANK_GREEN,     $02
+.equ HIRES_BANK_BLUE,      $03
+.equ HIRES_BANK_INTENSITY, $04
