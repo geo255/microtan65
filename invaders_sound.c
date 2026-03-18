@@ -85,8 +85,6 @@ static int play_sound(sound_id_t sound, int loops) {
 
 /* ---------------------------------------------------------------------------
  * Memory-mapped write handler for 0xBC04
- *
- * Call this from your memory write callback when address == 0xBC04
  * --------------------------------------------------------------------------*/
 void invaders_sound_write_callback(uint16_t address, uint8_t value) {
   (void)address;
@@ -202,7 +200,7 @@ int invaders_sound_initialise(uint8_t bank, uint16_t address, uint16_t param, ch
       /* Continue anyway - missing sounds just won't play */
     }
   }
-  system_register_memory_mapped_device(0xbc04, 0xbc04, NULL, invaders_sound_write_callback, true);
+  system_register_memory_mapped_device(address, address, NULL, invaders_sound_write_callback, true);
 
   invaders_sound_initialized = true;
   printf("Space Invaders sound effects initialized\n");
