@@ -51,19 +51,19 @@ make
 [](https://github.com/geo255/microtan65#running)
 
 ```
-./microtan65
+./build/microtan65
 ```
 
 To start with a program loaded into memory:
 
 ```
-./microtan65 <file name>
+./build/microtan65 <file name>
 ```
 
 eg.
 
 ```
-./microtan65 programs/defender.m65
+./build/microtan65 programs/defender.m65
 ```
 
 The Microtan TANBUG and BASIC are case sensitive and commands are all upper case, so the emulator swaps lower case and upper case, so you don't need to press CAPS yourself.
@@ -184,7 +184,7 @@ Go to my website at [https://geoff.org.uk/microtan/](https://geoff.org.uk/micro
 To load an Intel HEX file:
 
 ```
-./microtan65 program.hex
+./build/microtan65 program.hex
 ```
 
 The emulator auto-detects `.m65`, `.hex`, `.ihx`, and `.ihex` files by extension (and falls back to content detection for Intel HEX).

@@ -1,14 +1,16 @@
 .RECIPEPREFIX := >
 
 CC ?= gcc
-TARGET := microtan65
+SRC_DIR := src
+BUILD_DIR := build
+TARGET := $(BUILD_DIR)/microtan65
 PYTHON ?= python3
 
-SOURCES := ay8910.c cpu_6502.c display.c eprom.c invaders_sound.c joystick.c keyboard.c main.c popup.c serial.c system.c via_6522.c
-HEADERS := ay8910.h cpu_6502.h display.h eprom.h external_filenames.h function_return_codes.h invaders_sound.h joystick.h keyboard.h popup.h serial.h system.h via_6522.h
-OBJECTS := $(SOURCES:.c=.o)
+SOURCES := $(wildcard $(SRC_DIR)/*.c)
+HEADERS := $(wildcard $(SRC_DIR)/*.h)
+OBJECTS := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
 
-BASE_CFLAGS := $(shell sdl2-config --cflags) -std=c11 -D_POSIX_C_SOURCE=200809L
+BASE_CFLAGS := $(shell sdl2-config --cflags) -std=c11 -D_POSIX_C_SOURCE=200809L -I$(SRC_DIR)
 WARN_CFLAGS := -Wall -Wextra -Wpedantic
 DEBUG_CFLAGS := -O0 -g3
 RELEASE_CFLAGS := -O2
@@ -30,14 +32,17 @@ sanitize: CFLAGS := $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) $(SANITIZE_FLA
 sanitize: LDFLAGS := $(SANITIZE_FLAGS)
 sanitize: $(TARGET)
 
-$(TARGET): $(OBJECTS)
+$(TARGET): $(OBJECTS) | $(BUILD_DIR)
 >$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $(TARGET)
 
-%.o: %.c $(HEADERS)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(HEADERS) | $(BUILD_DIR)
 >$(CC) $(CFLAGS) -c $< -o $@
 
 run: $(TARGET)
 >./$(TARGET)
+
+$(BUILD_DIR):
+>mkdir -p $(BUILD_DIR)
 
 smoke:
 >missing=0; \
