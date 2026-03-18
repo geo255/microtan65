@@ -97,7 +97,7 @@ device_configuration_t system_devices[] =
     {via_6522_initialise, via_6522_reset, NULL, 0x00, 0xbfe0, 0x0000, NULL},
     {serial_initialise, serial_reset, NULL, 0x00, 0xbfd0, 0xbfd3, NULL},
     {eprom_initialise, NULL, NULL, 0x00, 0xc000, 0x0000, "microtan.rom"},
-    {ay8910_initialise, ay8910_reset, ay8910_close, 0x00, 0xbc00, 0xbc03, "ay8910"},
+    {ay8910_initialise, ay8910_reset, ay8910_close, 0x00, 0xbc00, 0xbc0F, "ay8910"},
     {invaders_sound_initialise, invaders_sound_reset, invaders_sound_close, 0x00, 0xbc80, 0xbc80, "invaders_sound"},
     {cpu_6502_initialise, cpu_6502_reset, NULL, 0x00, 0x0000, 0x0000, NULL},
     {NULL, NULL, NULL, 0x00, 0x0000, 0x0000, NULL}};

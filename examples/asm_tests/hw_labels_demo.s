@@ -15,6 +15,12 @@ Start:
     lda #$3F
     sta AY1_DATA
 
+    ; Also write to AY8 to show extended sound-card labels.
+    lda #AY_REG_A_VOL
+    sta AY8_ADDR
+    lda #$0F
+    sta AY8_DATA
+
     ; Use a VIA2 timer register label.
     lda #$12
     sta VIA2_T1L_H

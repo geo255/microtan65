@@ -21,7 +21,7 @@
  * Configuration
  * --------------------------------------------------------------------------*/
 #define PLAYBACK_FREQUENCY 22050 /* Hz - mono, 8-bit unsigned */
-#define MAX_DEVICES        2     /* Microtan 65 has two AY8910s */
+#define MAX_DEVICES        8     /* Microtan 65 has two AY8910s, we'll have 8 :) */
 
 /* SDL audio callback buffer size.  22050 Hz / 20 updates/sec = 1102 samples.
  * Round up to a power-of-two friendly size. */
@@ -33,7 +33,9 @@
 static ay8910_t chips[MAX_DEVICES];
 static bool ay8910_initialised = false;
 static SDL_AudioDeviceID audio_device = 0;
-static uint16_t address_table[MAX_DEVICES] = {0xbc00, 0xbc02};
+static uint16_t address_table[MAX_DEVICES] = {
+  0xbc00, 0xbc02, 0xbc04, 0xbc06, 0xbc08, 0xbc0a, 0xbc0c, 0xbc0e
+};
 static uint8_t ay8910_memory_mapped_registers[MAX_DEVICES][2];
 
 /* Each chip has its own output buffer; the SDL callback mixes them together. */
@@ -174,9 +176,9 @@ static void update_chip(int num, int num_samples) {
 }
 
 /* ---------------------------------------------------------------------------
- * SDL audio callback  - called from SDL's audio thread.
- * Generates fresh samples for both chips, then averages them into the
- * output buffer.
+ * SDL audio callback - called from SDL's audio thread.
+ * Generates fresh samples for all chips, then mixes them into the output
+ * buffer around the unsigned-audio midpoint (128).
  * --------------------------------------------------------------------------*/
 static void audio_callback(void* userdata, uint8_t* stream, int len) {
   (void)userdata;
@@ -191,12 +193,25 @@ static void audio_callback(void* userdata, uint8_t* stream, int len) {
   int num_samples = (len < AUDIO_BUF_SIZE) ? len : AUDIO_BUF_SIZE;
 
   /* Generate samples for each chip */
-  update_chip(0, num_samples);
-  update_chip(1, num_samples);
+  for (int chip = 0; chip < MAX_DEVICES; chip++) {
+    update_chip(chip, num_samples);
+  }
 
-  /* Mix: average the two chips into the output stream */
+  /* Mix all chips with clamping */
   for (int i = 0; i < num_samples; i++) {
-    stream[i] = (uint8_t)(((unsigned)chip_buffer[0][i] + (unsigned)chip_buffer[1][i]) / 2);
+    int mixed = 128;
+
+    for (int chip = 0; chip < MAX_DEVICES; chip++) {
+      mixed += (int)chip_buffer[chip][i] - 128;
+    }
+
+    if (mixed < 0) {
+      mixed = 0;
+    } else if (mixed > 255) {
+      mixed = 255;
+    }
+
+    stream[i] = (uint8_t)mixed;
   }
 
   if (num_samples < len) {
@@ -377,8 +392,9 @@ int ay8910_initialise(uint8_t bank, uint16_t address, uint16_t param, char* iden
     reset_chip(i);
   }
 
-  system_register_memory_mapped_device(0xbc00, 0xbc01, ay8910_read_callback, ay8910_write_callback, false);
-  system_register_memory_mapped_device(0xbc02, 0xbc03, ay8910_read_callback, ay8910_write_callback, false);
+  for (int i = 0; i < MAX_DEVICES; i++) {
+    system_register_memory_mapped_device(address_table[i], address_table[i] + 1, ay8910_read_callback, ay8910_write_callback, false);
+  }
 
   /* For WSLg support - point PulseAudio to WSLg server if it exists */
   const char* wslg_pulse = "/mnt/wslg/PulseServer";
@@ -434,8 +450,9 @@ void ay8910_reset(uint8_t bank, uint16_t address) {
   if (!ay8910_initialised)
     return;
 
-  reset_chip(0);
-  reset_chip(1);
+  for (int i = 0; i < MAX_DEVICES; i++) {
+    reset_chip(i);
+  }
 }
 
 void ay8910_close(void) {
@@ -449,4 +466,3 @@ void ay8910_close(void) {
 
   ay8910_initialised = false;
 }
-

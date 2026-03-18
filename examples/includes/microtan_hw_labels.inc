@@ -110,7 +110,19 @@
 .equ AY1_DATA,       $BC01
 .equ AY2_ADDR,       $BC02
 .equ AY2_DATA,       $BC03
-.equ INVADERS_SOUND, $BC04
+.equ AY3_ADDR,       $BC04
+.equ AY3_DATA,       $BC05
+.equ AY4_ADDR,       $BC06
+.equ AY4_DATA,       $BC07
+.equ AY5_ADDR,       $BC08
+.equ AY5_DATA,       $BC09
+.equ AY6_ADDR,       $BC0A
+.equ AY6_DATA,       $BC0B
+.equ AY7_ADDR,       $BC0C
+.equ AY7_DATA,       $BC0D
+.equ AY8_ADDR,       $BC0E
+.equ AY8_DATA,       $BC0F
+.equ INVADERS_SOUND, $BC80
 
 ; AY register indices (write index to AYx_ADDR, then data via AYx_DATA)
 .equ AY_REG_A_FINE,     $00
