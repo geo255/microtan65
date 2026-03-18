@@ -18,6 +18,81 @@
 #define PATH_MAX 4096
 #endif
 
+static void popup_get_renderer_size(SDL_Renderer* renderer, int* width, int* height) {
+  int w = 800;
+  int h = 600;
+
+  if (renderer) {
+    int out_w = 0;
+    int out_h = 0;
+
+    if ((SDL_GetRendererOutputSize(renderer, &out_w, &out_h) == 0) && (out_w > 0) && (out_h > 0)) {
+      w = out_w;
+      h = out_h;
+    }
+  }
+
+  *width = w;
+  *height = h;
+}
+
+static SDL_Rect popup_center_rect(SDL_Renderer* renderer, int desired_w, int desired_h, int margin) {
+  int window_w;
+  int window_h;
+  popup_get_renderer_size(renderer, &window_w, &window_h);
+
+  int max_w = window_w - (margin * 2);
+  int max_h = window_h - (margin * 2);
+  if (max_w < 120) {
+    max_w = window_w;
+  }
+  if (max_h < 120) {
+    max_h = window_h;
+  }
+
+  SDL_Rect rect;
+  rect.w = desired_w;
+  rect.h = desired_h;
+
+  if (rect.w > max_w) {
+    rect.w = max_w;
+  }
+  if (rect.h > max_h) {
+    rect.h = max_h;
+  }
+  if (rect.w < 120) {
+    rect.w = 120;
+  }
+  if (rect.h < 120) {
+    rect.h = 120;
+  }
+
+  rect.x = (window_w - rect.w) / 2;
+  rect.y = (window_h - rect.h) / 2;
+  return rect;
+}
+
+static int popup_font_size_for_renderer(SDL_Renderer* renderer) {
+  int width;
+  int height;
+  popup_get_renderer_size(renderer, &width, &height);
+
+  int min_dim = (width < height) ? width : height;
+  if (min_dim < 420) {
+    return 14;
+  }
+  if (min_dim < 560) {
+    return 16;
+  }
+  if (min_dim < 720) {
+    return 18;
+  }
+  if (min_dim < 900) {
+    return 20;
+  }
+  return 24;
+}
+
 static bool popup_find_font(char* font_path, size_t font_path_size) {
   DIR* d = opendir(".");
 
@@ -41,7 +116,7 @@ static bool popup_find_font(char* font_path, size_t font_path_size) {
   return font_path[0] != '\0';
 }
 
-static TTF_Font* popup_open_font(void) {
+static TTF_Font* popup_open_font(SDL_Renderer* renderer) {
   char font_path[256];
 
   if (!popup_find_font(font_path, sizeof(font_path))) {
@@ -54,7 +129,8 @@ static TTF_Font* popup_open_font(void) {
     return NULL;
   }
 
-  TTF_Font* font = TTF_OpenFont(font_path, 24);
+  int font_size = popup_font_size_for_renderer(renderer);
+  TTF_Font* font = TTF_OpenFont(font_path, font_size);
   if (font == NULL) {
     printf("TTF_OpenFont: %s\n", TTF_GetError());
     return NULL;
@@ -65,7 +141,13 @@ static TTF_Font* popup_open_font(void) {
 
 static void popup_draw_frame(SDL_Renderer* renderer, const SDL_Rect* popup_rect) {
   SDL_Color bg_color = {242, 133, 0, 235};
-  int border_thickness = 6;
+  int min_side = popup_rect->w < popup_rect->h ? popup_rect->w : popup_rect->h;
+  int border_thickness = min_side / 60;
+  if (border_thickness < 2) {
+    border_thickness = 2;
+  } else if (border_thickness > 6) {
+    border_thickness = 6;
+  }
 
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   SDL_SetRenderDrawColor(renderer, bg_color.r, bg_color.g, bg_color.b, bg_color.a);
@@ -76,11 +158,23 @@ static void popup_draw_frame(SDL_Renderer* renderer, const SDL_Rect* popup_rect)
     popup_rect->y + 2 * border_thickness,
     popup_rect->w - 4 * border_thickness,
     popup_rect->h - 4 * border_thickness};
+  if (outer_border_rect.w < 2) {
+    outer_border_rect.w = 2;
+  }
+  if (outer_border_rect.h < 2) {
+    outer_border_rect.h = 2;
+  }
   SDL_Rect inner_border_rect = {
     outer_border_rect.x + 2 * border_thickness,
     outer_border_rect.y + 2 * border_thickness,
     outer_border_rect.w - 4 * border_thickness,
     outer_border_rect.h - 4 * border_thickness};
+  if (inner_border_rect.w < 2) {
+    inner_border_rect.w = 2;
+  }
+  if (inner_border_rect.h < 2) {
+    inner_border_rect.h = 2;
+  }
 
   SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
@@ -101,9 +195,9 @@ static void popup_draw_frame(SDL_Renderer* renderer, const SDL_Rect* popup_rect)
 
 void popup_show(SDL_Renderer* renderer, const char* message) {
   SDL_Color text_color = {0, 0, 0, 255};
-  SDL_Rect popup_rect = {100, 100, 400, 300};
+  SDL_Rect popup_rect = popup_center_rect(renderer, 420, 300, 12);
 
-  TTF_Font* font = popup_open_font();
+  TTF_Font* font = popup_open_font(renderer);
   if (!font) {
     return;
   }
@@ -127,6 +221,7 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
   int text_w[POPUP_MAX_LINES];
   int text_h[POPUP_MAX_LINES];
   int max_text_width = 0;
+  int total_text_height = 0;
 
   for (int i = 0; i < num_lines; i++) {
     text_textures[i] = NULL;
@@ -145,13 +240,20 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
     if (text_surface->w > max_text_width) {
       max_text_width = text_surface->w;
     }
+    total_text_height += text_surface->h + 5;
 
     SDL_FreeSurface(text_surface);
   }
 
-  if (popup_rect.w < max_text_width + 80) {
-    popup_rect.w = max_text_width + 80;
+  int desired_width = max_text_width + 80;
+  int desired_height = total_text_height + 70;
+  if (desired_width < 320) {
+    desired_width = 320;
   }
+  if (desired_height < 180) {
+    desired_height = 180;
+  }
+  popup_rect = popup_center_rect(renderer, desired_width, desired_height, 12);
 
   bool popup_done = false;
 
@@ -202,12 +304,30 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
   }
 
   SDL_Color text_color = {0, 0, 0, 255};
-  SDL_Rect popup_rect = {120, 120, 560, 260};
-  SDL_Rect input_rect = {popup_rect.x + 30, popup_rect.y + 140, popup_rect.w - 60, 42};
+  SDL_Rect popup_rect = popup_center_rect(renderer, 560, 280, 12);
+  int line_height = 28;
+  int padding = 20;
+  SDL_Rect input_rect = {0, 0, 0, 0};
 
-  TTF_Font* font = popup_open_font();
+  TTF_Font* font = popup_open_font(renderer);
   if (!font) {
     return false;
+  }
+  line_height = TTF_FontLineSkip(font);
+  if (line_height < 18) {
+    line_height = 18;
+  }
+  if (popup_rect.w < 420) {
+    padding = 14;
+  }
+
+  int input_h = (line_height < 22) ? 34 : 42;
+  input_rect.x = popup_rect.x + padding;
+  input_rect.w = popup_rect.w - (2 * padding);
+  input_rect.h = input_h;
+  input_rect.y = popup_rect.y + popup_rect.h - input_h - line_height - padding;
+  if (input_rect.y < popup_rect.y + (2 * padding) + line_height * 2) {
+    input_rect.y = popup_rect.y + (2 * padding) + line_height * 2;
   }
 
   bool done = false;
@@ -262,12 +382,12 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
     SDL_Texture* hint_texture = hint_surface ? SDL_CreateTextureFromSurface(renderer, hint_surface) : NULL;
 
     if (title_texture) {
-      SDL_Rect rect = {popup_rect.x + 24, popup_rect.y + 24, title_surface->w, title_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding, title_surface->w, title_surface->h};
       SDL_RenderCopy(renderer, title_texture, NULL, &rect);
     }
 
     if (prompt_texture) {
-      SDL_Rect rect = {popup_rect.x + 24, popup_rect.y + 78, prompt_surface->w, prompt_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding + line_height + 8, prompt_surface->w, prompt_surface->h};
       SDL_RenderCopy(renderer, prompt_texture, NULL, &rect);
     }
 
@@ -288,7 +408,7 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
     }
 
     if (hint_texture) {
-      SDL_Rect rect = {popup_rect.x + 24, popup_rect.y + popup_rect.h - 46, hint_surface->w, hint_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + popup_rect.h - line_height - padding, hint_surface->w, hint_surface->h};
       SDL_RenderCopy(renderer, hint_texture, NULL, &rect);
     }
 
@@ -495,14 +615,46 @@ bool popup_file_select(SDL_Renderer* renderer,
   output[0] = '\0';
 
   SDL_Color text_color = {0, 0, 0, 255};
-  SDL_Rect popup_rect = {70, 50, 660, 500};
-  SDL_Rect list_rect = {popup_rect.x + 20, popup_rect.y + 120, popup_rect.w - 40, popup_rect.h - (allow_text_entry ? 220 : 160)};
-  SDL_Rect input_rect = {popup_rect.x + 20, popup_rect.y + popup_rect.h - 84, popup_rect.w - 40, 42};
+  SDL_Rect popup_rect = popup_center_rect(renderer, 700, 540, 10);
+  SDL_Rect list_rect = {0, 0, 0, 0};
+  SDL_Rect input_rect = {0, 0, 0, 0};
+  int line_height;
+  int row_height;
+  int padding = (popup_rect.w < 540) ? 12 : 20;
 
-  TTF_Font* font = popup_open_font();
+  TTF_Font* font = popup_open_font(renderer);
   if (!font) {
     return false;
   }
+  line_height = TTF_FontLineSkip(font);
+  if (line_height < 16) {
+    line_height = 16;
+  }
+  row_height = line_height + 10;
+  if (row_height < 24) {
+    row_height = 24;
+  }
+
+  int header_height = padding + line_height + 6 + line_height + 6 + line_height + 10;
+  int footer_height = allow_text_entry ? (line_height * 2 + 68) : (line_height + 24);
+  list_rect.x = popup_rect.x + padding;
+  list_rect.y = popup_rect.y + header_height;
+  list_rect.w = popup_rect.w - (2 * padding);
+  list_rect.h = popup_rect.h - header_height - footer_height;
+  if (list_rect.h < (row_height * 3)) {
+    list_rect.h = row_height * 3;
+  }
+  if (list_rect.y + list_rect.h > popup_rect.y + popup_rect.h - (allow_text_entry ? (line_height + 50) : (line_height + 10))) {
+    list_rect.h = popup_rect.y + popup_rect.h - (allow_text_entry ? (line_height + 50) : (line_height + 10)) - list_rect.y;
+  }
+  if (list_rect.h < row_height) {
+    list_rect.h = row_height;
+  }
+
+  input_rect.x = popup_rect.x + padding;
+  input_rect.w = popup_rect.w - (2 * padding);
+  input_rect.h = (line_height < 22) ? 34 : 42;
+  input_rect.y = popup_rect.y + popup_rect.h - input_rect.h - padding - line_height - 6;
 
   char current_directory[PATH_MAX];
   popup_resolve_start_directory(start_directory, current_directory, sizeof(current_directory));
@@ -567,7 +719,7 @@ bool popup_file_select(SDL_Renderer* renderer,
         }
       } else if (event.type == SDL_KEYDOWN) {
         SDL_KeyCode key = event.key.keysym.sym;
-        int visible_rows = list_rect.h / 34;
+        int visible_rows = list_rect.h / row_height;
         if (visible_rows < 1) {
           visible_rows = 1;
         }
@@ -642,7 +794,7 @@ bool popup_file_select(SDL_Renderer* renderer,
       }
     }
 
-    int visible_rows = list_rect.h / 34;
+    int visible_rows = list_rect.h / row_height;
     if (visible_rows < 1) {
       visible_rows = 1;
     }
@@ -669,17 +821,17 @@ bool popup_file_select(SDL_Renderer* renderer,
     SDL_Texture* hint_texture = hint_surface ? SDL_CreateTextureFromSurface(renderer, hint_surface) : NULL;
 
     if (title_texture) {
-      SDL_Rect rect = {popup_rect.x + 20, popup_rect.y + 18, title_surface->w, title_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding - 2, title_surface->w, title_surface->h};
       SDL_RenderCopy(renderer, title_texture, NULL, &rect);
     }
 
     if (path_texture) {
-      SDL_Rect rect = {popup_rect.x + 20, popup_rect.y + 50, path_surface->w, path_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding + line_height + 2, path_surface->w, path_surface->h};
       SDL_RenderCopy(renderer, path_texture, NULL, &rect);
     }
 
     if (hint_texture) {
-      SDL_Rect rect = {popup_rect.x + 20, popup_rect.y + 82, hint_surface->w, hint_surface->h};
+      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding + line_height * 2 + 6, hint_surface->w, hint_surface->h};
       SDL_RenderCopy(renderer, hint_texture, NULL, &rect);
     }
 
@@ -695,7 +847,7 @@ bool popup_file_select(SDL_Renderer* renderer,
     }
 
     for (int i = scroll_offset; i < max_row; i++) {
-      SDL_Rect row_rect = {list_rect.x + 6, y - 2, list_rect.w - 12, 30};
+      SDL_Rect row_rect = {list_rect.x + 6, y - 2, list_rect.w - 12, row_height - 4};
       if (i == selected_index) {
         SDL_SetRenderDrawColor(renderer, 255, 210, 120, 255);
         SDL_RenderFillRect(renderer, &row_rect);
@@ -718,7 +870,7 @@ bool popup_file_select(SDL_Renderer* renderer,
       if (row_surface)
         SDL_FreeSurface(row_surface);
 
-      y += 34;
+      y += row_height;
     }
 
     if (allow_text_entry) {
@@ -789,9 +941,9 @@ int popup_menu_select(SDL_Renderer* renderer, const char* title, const char* con
   }
 
   SDL_Color text_color = {0, 0, 0, 255};
-  SDL_Rect popup_rect = {100, 80, 520, 420};
+  SDL_Rect popup_rect = popup_center_rect(renderer, 520, 420, 12);
 
-  TTF_Font* font = popup_open_font();
+  TTF_Font* font = popup_open_font(renderer);
   if (!font) {
     return -1;
   }
@@ -852,6 +1004,7 @@ int popup_menu_select(SDL_Renderer* renderer, const char* title, const char* con
   if (popup_rect.h < 260) {
     popup_rect.h = 260;
   }
+  popup_rect = popup_center_rect(renderer, popup_rect.w, popup_rect.h, 12);
 
   bool menu_done = false;
   int menu_result = -1;
