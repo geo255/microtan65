@@ -2,10 +2,12 @@
 #include <SDL.h>
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,21 +27,92 @@
 
 const char* SETTINGS_FILE = "microtan_settings.txt";
 
-void save_window_settings(SDL_Window* window) {
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+static bool directory_exists(const char* path) {
+  struct stat st;
+  return path && (*path != '\0') && (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
+}
+
+static void trim_trailing_newline(char* text) {
+  if (!text) {
+    return;
+  }
+
+  size_t length = strlen(text);
+  while (length > 0) {
+    char ch = text[length - 1];
+    if ((ch == '\n') || (ch == '\r')) {
+      text[length - 1] = '\0';
+      length--;
+    } else {
+      break;
+    }
+  }
+}
+
+static void choose_default_file_directory(char* output, size_t output_size) {
+  if (directory_exists("programs")) {
+    snprintf(output, output_size, "programs");
+  } else {
+    snprintf(output, output_size, ".");
+  }
+}
+
+static void update_file_dialog_directory(const char* selected_file, char* output, size_t output_size) {
+  if (!selected_file || !output || (output_size == 0)) {
+    return;
+  }
+
+  const char* slash = strrchr(selected_file, '/');
+  const char* backslash = strrchr(selected_file, '\\');
+  const char* separator = slash;
+
+  if (backslash && (!separator || (backslash > separator))) {
+    separator = backslash;
+  }
+
+  if (!separator) {
+    if (directory_exists(".")) {
+      snprintf(output, output_size, ".");
+    }
+    return;
+  }
+
+  size_t directory_length = (size_t)(separator - selected_file);
+  if (directory_length == 0) {
+    snprintf(output, output_size, "/");
+    return;
+  }
+
+  if (directory_length >= output_size) {
+    directory_length = output_size - 1;
+  }
+
+  memcpy(output, selected_file, directory_length);
+  output[directory_length] = '\0';
+}
+
+void save_window_settings(SDL_Window* window, const char* file_dialog_directory) {
   int x, y, width, height;
   SDL_GetWindowSize(window, &width, &height);
   SDL_GetWindowPosition(window, &x, &y);
   FILE* file = fopen(SETTINGS_FILE, "w");
 
   if (file) {
-    fprintf(file, "%d %d %d %d %d", x, y, width, height, (int)display_get_hires_mode());
+    const char* save_directory = (file_dialog_directory && (*file_dialog_directory != '\0')) ? file_dialog_directory : ".";
+    fprintf(file, "%d %d %d %d %d\n%s\n", x, y, width, height, (int)display_get_hires_mode(), save_directory);
     fclose(file);
   }
 }
 
-void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode) {
+void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode, char* file_dialog_directory, size_t file_dialog_directory_size) {
   FILE* file = fopen(SETTINGS_FILE, "r");
+  char path_line[PATH_MAX];
   *display_mode = DISPLAY_HIRES_MODE_NONE;
+  choose_default_file_directory(file_dialog_directory, file_dialog_directory_size);
 
   if (file) {
     int display_mode_raw = 0;
@@ -51,6 +124,20 @@ void load_window_settings(int* x, int* y, int* width, int* height, display_hires
     } else if ((values_read >= 5) && (display_mode_raw >= (int)DISPLAY_HIRES_MODE_NONE) && (display_mode_raw <= (int)DISPLAY_HIRES_MODE_EXTENDED)) {
       *display_mode = (display_hires_mode_t)display_mode_raw;
     }
+
+    // Consume remainder of line with geometry/mode fields.
+    if (fgets(path_line, sizeof(path_line), file) == NULL) {
+      path_line[0] = '\0';
+    }
+
+    // Optional persisted file-dialog directory line.
+    if (fgets(path_line, sizeof(path_line), file) != NULL) {
+      trim_trailing_newline(path_line);
+      if ((path_line[0] != '\0') && directory_exists(path_line)) {
+        snprintf(file_dialog_directory, file_dialog_directory_size, "%s", path_line);
+      }
+    }
+
     fclose(file);
   }
 }
@@ -165,7 +252,7 @@ static const char* display_mode_name(display_hires_mode_t mode) {
   }
 }
 
-static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
+static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, char* file_dialog_directory, size_t file_dialog_directory_size) {
   const char* menu_items[] = {
     "Reset system",
     "Select hex keypad input",
@@ -178,7 +265,7 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
     "Cancel"};
 
   int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 9, 0);
-  char file_name[512];
+  char file_name[PATH_MAX];
   char range_input[128];
   int rv;
 
@@ -201,7 +288,8 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
     case 3: {
       const char* load_extensions[] = {".m65", ".hex", ".ihx", ".ihex"};
 
-      if (popup_file_select(renderer, "Load Program", ".", load_extensions, 4, false, "", file_name, sizeof(file_name))) {
+      if (popup_file_select(renderer, "Load Program", file_dialog_directory, load_extensions, 4, false, "", file_name, sizeof(file_name))) {
+        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
         // Match startup load behavior: reset hardware state before loading a program file.
         system_reset();
         rv = system_load_program_file(file_name);
@@ -220,7 +308,8 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
     case 4: {
       const char* m65_extensions[] = {".m65"};
 
-      if (popup_file_select(renderer, "Save Snapshot", ".", m65_extensions, 1, true, "snapshot.m65", file_name, sizeof(file_name))) {
+      if (popup_file_select(renderer, "Save Snapshot", file_dialog_directory, m65_extensions, 1, true, "snapshot.m65", file_name, sizeof(file_name))) {
+        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
         rv = system_save_m65_file(file_name);
         if (rv == RV_OK) {
           popup_show(renderer, "Snapshot saved.");
@@ -236,9 +325,10 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
       uint16_t end_address;
       const char* hex_extensions[] = {".hex", ".ihx", ".ihex"};
 
-      if (!popup_file_select(renderer, "Save Intel HEX", ".", hex_extensions, 3, true, "range.hex", file_name, sizeof(file_name))) {
+      if (!popup_file_select(renderer, "Save Intel HEX", file_dialog_directory, hex_extensions, 3, true, "range.hex", file_name, sizeof(file_name))) {
         break;
       }
+      update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
 
       if (!popup_prompt_input(renderer, "Save Intel HEX", "Address range start-end (hex)", "0200-03FF", range_input, sizeof(range_input))) {
         break;
@@ -316,7 +406,8 @@ int main(int argc, char* argv[]) {
   SDL_Init(SDL_INIT_VIDEO);
   int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED, width = DISPLAY_WIDTH, height = DISPLAY_HEIGHT;
   display_hires_mode_t saved_display_mode = DISPLAY_HIRES_MODE_NONE;
-  load_window_settings(&x, &y, &width, &height, &saved_display_mode);
+  char file_dialog_directory[PATH_MAX];
+  load_window_settings(&x, &y, &width, &height, &saved_display_mode, file_dialog_directory, sizeof(file_dialog_directory));
   display_set_hires_mode(saved_display_mode);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
@@ -404,7 +495,7 @@ int main(int argc, char* argv[]) {
           SDL_KeyCode keycode = event.key.keysym.sym;
 
           if (keycode == SDLK_F1) {
-            show_main_menu(renderer, &display_overwritten);
+            show_main_menu(renderer, &display_overwritten, file_dialog_directory, sizeof(file_dialog_directory));
           } else if (keycode == SDLK_F2) {
             keyboard_use_hex_keypad(true);
           } else if (keycode == SDLK_F3) {
@@ -442,7 +533,7 @@ int main(int argc, char* argv[]) {
     }
   } // main loop
 
-  save_window_settings(window);
+  save_window_settings(window, file_dialog_directory);
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);

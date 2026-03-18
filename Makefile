@@ -46,11 +46,11 @@ smoke:
 >  charset.rom \
 >  arial.ttx \
 >  cour.ttf \
->  adventure.m65 \
->  astrofighter.m65 \
->  berzerk.m65 \
->  defender.m65 \
->  invaders.m65; do \
+>  programs/adventure.m65 \
+>  programs/astrofighter.m65 \
+>  programs/berzerk.m65 \
+>  programs/defender.m65 \
+>  programs/invaders.m65; do \
 >  if [ ! -f "$$f" ]; then \
 >    echo "Missing: $$f"; \
 >    missing=1; \
