@@ -17,6 +17,8 @@ Emulates a Microtan 65 system with the following specifications:
 - Prototype "GPU" graphics board - in development
 - My .m65 snapshot format and Intel HEX program loading
 
+GPU register documentation: `docs/GPU_REGISTER_SPEC.md`
+
 ## TODO:
 
 [](https://github.com/geo255/microtan65#todo)

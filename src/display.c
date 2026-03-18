@@ -16,6 +16,19 @@
 #define GPU_RANDOM_REGISTER       0x7d
 #define GPU_STATUS_REGISTER       0x7e
 #define GPU_OPERATION_REGISTER    0x7f
+#define GPU_RESULT0_REGISTER      0x1d
+#define GPU_RESULT1_REGISTER      0x1e
+#define GPU_ERROR_REGISTER        0x1f
+#define GPU_COLLISION_ID_REGISTER 0x20
+#define GPU_COLLISION_COUNT       0x21
+#define GPU_COLLISION_FIRST       0x22
+
+#define GPU_STATUS_OK             0x00
+#define GPU_STATUS_ADDR_RANGE     0x01
+#define GPU_STATUS_ALLOCATION     0x02
+#define GPU_STATUS_INVALID_ID     0x03
+#define GPU_STATUS_INACTIVE       0x04
+#define GPU_STATUS_BAD_OPCODE     0x05
 
 #define NUM_GPU_PLANES       4
 #define MAX_STAMPS           256
@@ -66,6 +79,8 @@ static uint8_t palette_blue[256];
 
 static display_hires_mode_t hires_mode = DISPLAY_HIRES_MODE_NONE;
 static bool display_updated = true;
+static bool sprite_is_enabled(const sprite_t* sprite);
+static bool sprite_is_visible(const sprite_t* sprite);
 
 static uint8_t main_display_read_callback(uint16_t address) {
   (void)address;
@@ -177,31 +192,28 @@ void display_render(uint32_t* pixels) {
     } break;
 
     case DISPLAY_HIRES_MODE_EXTENDED: {
-      int i = 0;
-      for (int plane = 0; plane < NUM_GPU_PLANES; plane++) {
-        if (gpu_reg[GPU_PLANE_DISPLAY_MASK] & (1 << plane)) {
-          for (int y = 0; y < DISPLAY_HEIGHT; y++) {
-            for (int x = 0; x < DISPLAY_WIDTH; x++) {
-              uint32_t w = ((white_array[i] >> (7 - (x & 0x07))) & 1) * 0xffffffff;
-              uint32_t red = 0;
-              uint32_t green = 0;
-              uint32_t blue = 0;
-              if ((x >= border_left) && (x <= 255 - border_right) && (y >= border_top) && (y <= 255 - border_bottom)) {
-                red = palette_red[gpu_pixels[x][y]];
-                green = palette_green[gpu_pixels[x][y]];
-                blue = palette_blue[gpu_pixels[x][y]];
-              }
-              pixels[y * DISPLAY_WIDTH + x] = w | (red << 24) | (green << 16) | (blue << 8) | 0xff;
-              if ((x & 0x07) == 0x07) {
-                i++;
-              }
-            }
+      bool show_gpu = (gpu_reg[GPU_PLANE_DISPLAY_MASK] & ((1 << NUM_GPU_PLANES) - 1)) != 0;
+      for (int y = 0; y < DISPLAY_HEIGHT; y++) {
+        for (int x = 0; x < DISPLAY_WIDTH; x++) {
+          int i = (y * 32) + (x >> 3);
+          uint32_t w = ((white_array[i] >> (7 - (x & 0x07))) & 1) * 0xffffffff;
+          uint32_t red = 0;
+          uint32_t green = 0;
+          uint32_t blue = 0;
+          if (show_gpu &&
+              (x >= border_left) && (x <= 255 - border_right) &&
+              (y >= border_top) && (y <= 255 - border_bottom)) {
+            red = palette_red[gpu_pixels[x][y]];
+            green = palette_green[gpu_pixels[x][y]];
+            blue = palette_blue[gpu_pixels[x][y]];
           }
+          pixels[y * DISPLAY_WIDTH + x] = w | (red << 24) | (green << 16) | (blue << 8) | 0xff;
         }
       }
+
       sprite_ptr_t sprite = gpu_sprite_table;
-      for (i = 0; i < MAX_SPRITES; i++) {
-        if ((sprite->active) && (NULL != sprite->image_ptr) &&
+      for (int i = 0; i < MAX_SPRITES; i++) {
+        if ((sprite->active) && sprite_is_enabled(sprite) && sprite_is_visible(sprite) && (NULL != sprite->image_ptr) &&
             (sprite->width > 0) && (sprite->height > 0)) {
           uint32_t red = 0;
           uint32_t green = 0;
@@ -209,12 +221,17 @@ void display_render(uint32_t* pixels) {
           uint8_t* sprite_pixel = sprite->image_ptr;
           for (int sy = 0; sy < sprite->height; sy++) {
             int y = sprite->y + sy;
+            if ((y < 0) || (y >= DISPLAY_HEIGHT)) {
+              sprite_pixel += sprite->width;
+              continue;
+            }
             for (int sx = 0; sx < sprite->width; sx++) {
-              if (*sprite_pixel != 0xff) {
+              int x = sprite->x + sx;
+              if ((*sprite_pixel != 0xff) && (x >= 0) && (x < DISPLAY_WIDTH)) {
                 red = palette_red[*sprite_pixel];
                 green = palette_green[*sprite_pixel];
                 blue = palette_blue[*sprite_pixel];
-                pixels[y * DISPLAY_WIDTH + sprite->x + sx] = (red << 24) | (green << 16) | (blue << 8) | 0xff;
+                pixels[y * DISPLAY_WIDTH + x] = (red << 24) | (green << 16) | (blue << 8) | 0xff;
               }
               sprite_pixel++;
             }
@@ -272,8 +289,29 @@ void display_save_chunky_memory(uint8_t* dest) {
   }
 }
 
+static bool sprite_is_enabled(const sprite_t* sprite) {
+  return (sprite->flags & SPRITE_FLAGS_ENABLED) != 0;
+}
+
+static bool sprite_is_visible(const sprite_t* sprite) {
+  return (sprite->flags & SPRITE_FLAGS_VISIBLE) != 0;
+}
+
 void display_gpu_set_colour(uint8_t x, uint8_t y, uint8_t colour) {
-  gpu_pixels[x][y] = colour;
+  uint8_t write_mask = gpu_reg[GPU_PLANE_WRITE_MASK] & 0x0f;
+
+  if (write_mask == 0) {
+    return;
+  }
+
+  if (write_mask == 0x0f) {
+    gpu_pixels[x][y] = colour;
+  } else {
+    // Treat plane bits as nibble masks over low/high nibble pairs.
+    uint8_t full_mask = (uint8_t)(write_mask | (write_mask << 4));
+    gpu_pixels[x][y] = (gpu_pixels[x][y] & (uint8_t)~full_mask) | (colour & full_mask);
+  }
+
   display_updated = true;
 }
 
@@ -524,7 +562,7 @@ void display_gpu_scroll(int h, int v, uint8_t colour) {
 
 void display_gpu_stamp_create(uint8_t id, uint8_t width, uint8_t height, uint16_t image_address) {
   if (((int)image_address + ((int)width * (int)height)) > 0xffff) {
-    gpu_reg[0x1f] = 0x01;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_ADDR_RANGE;
     return;
   }
   if (NULL != gpu_stamp_table[id]) {
@@ -532,19 +570,19 @@ void display_gpu_stamp_create(uint8_t id, uint8_t width, uint8_t height, uint16_
   }
   gpu_stamp_table[id] = malloc((int)width * (int)height + 2);
   if (NULL == gpu_stamp_table[id]) {
-    gpu_reg[0x1f] = 0x02;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_ALLOCATION;
     return;
   }
   gpu_stamp_table[id][0] = width;
   gpu_stamp_table[id][1] = height;
   uint8_t* src = system_get_memory_pointer(image_address);
   memcpy(gpu_stamp_table[id] + 2, src, (int)width * (int)height);
-  gpu_reg[0x1f] = 0x00;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 }
 
 void display_gpu_stamp_place(uint8_t id, int16_t px, int16_t py) {
   if (NULL == gpu_stamp_table[id]) {
-    gpu_reg[0x1f] = 0x02;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_ALLOCATION;
     return;
   }
 
@@ -559,17 +597,17 @@ void display_gpu_stamp_place(uint8_t id, int16_t px, int16_t py) {
       image++;
     }
   }
-  gpu_reg[0x1f] = 0x00;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 }
 
 void display_gpu_sprite_create(uint8_t id, int16_t x, int16_t y, uint8_t group, uint8_t collision_group, uint8_t flags, uint8_t width, uint8_t height, uint16_t image_address) {
   if (id >= MAX_SPRITES) {
-    gpu_reg[0x1f] = 0x03;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INVALID_ID;
     return;
   }
 
   if (((int)image_address + ((int)width * (int)height)) > 0xffff) {
-    gpu_reg[0x1f] = 0x01;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_ADDR_RANGE;
     return;
   }
 
@@ -578,7 +616,7 @@ void display_gpu_sprite_create(uint8_t id, int16_t x, int16_t y, uint8_t group, 
   }
   gpu_sprite_table[id].image_ptr = malloc((int)width * (int)height + 2);
   if (NULL == gpu_sprite_table[id].image_ptr) {
-    gpu_reg[0x1f] = 0x02;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_ALLOCATION;
     return;
   }
 
@@ -588,6 +626,9 @@ void display_gpu_sprite_create(uint8_t id, int16_t x, int16_t y, uint8_t group, 
   gpu_sprite_table[id].height = height;
   gpu_sprite_table[id].group = group;
   gpu_sprite_table[id].collision_group = collision_group;
+  if (flags == 0) {
+    flags = SPRITE_FLAGS_ENABLED | SPRITE_FLAGS_VISIBLE;
+  }
   gpu_sprite_table[id].flags = flags;
 
   uint8_t* src = system_get_memory_pointer(image_address);
@@ -595,54 +636,55 @@ void display_gpu_sprite_create(uint8_t id, int16_t x, int16_t y, uint8_t group, 
 
   gpu_sprite_table[id].active = true;
 
-  gpu_reg[0x1f] = 0x00;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 }
 
 void display_gpu_sprite_move(uint8_t id, uint16_t x, uint16_t y) {
   if (id >= MAX_SPRITES) {
-    gpu_reg[0x1f] = 0x03;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INVALID_ID;
     return;
   }
-  if (!gpu_sprite_table[id].active) {
-    gpu_reg[0x1f] = 0x04;
+  if (!gpu_sprite_table[id].active || !sprite_is_enabled(&gpu_sprite_table[id])) {
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INACTIVE;
     return;
   }
   gpu_sprite_table[id].x = x;
   gpu_sprite_table[id].y = y;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 }
 
 void display_gpu_sprite_set_flags(uint8_t id, uint8_t flags) {
   if (id >= MAX_SPRITES) {
-    gpu_reg[0x1f] = 0x03;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INVALID_ID;
     return;
   }
   if (!gpu_sprite_table[id].active) {
-    gpu_reg[0x1f] = 0x04;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INACTIVE;
     return;
   }
   gpu_sprite_table[id].flags = flags;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 }
 
 void display_gpu_sprite_detect_collisions(uint8_t id) {
   uint8_t number_of_collisions = 0;
-  gpu_reg[0x20] = 0xff;
-  gpu_reg[0x21] = 0x00;
-  for (int i = 0x22; i < 0x22 + MAX_SPRITES; i++)
+  gpu_reg[GPU_COLLISION_ID_REGISTER] = 0xff;
+  gpu_reg[GPU_COLLISION_COUNT] = 0x00;
+  for (int i = GPU_COLLISION_FIRST; i < GPU_COLLISION_FIRST + MAX_SPRITES; i++)
     gpu_reg[i] = 0xff;
 
   if (id >= MAX_SPRITES) {
-    gpu_reg[0x1f] = 0x03;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INVALID_ID;
     return;
   }
-  if (!gpu_sprite_table[id].active) {
-    gpu_reg[0x1f] = 0x04;
+  if (!gpu_sprite_table[id].active || !sprite_is_enabled(&gpu_sprite_table[id])) {
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_INACTIVE;
     return;
   }
 
-  gpu_reg[0x20] = id;
-  printf("Check collisions for %02x\r\n", id);
+  gpu_reg[GPU_COLLISION_ID_REGISTER] = id;
   for (int j = 0; j < MAX_SPRITES; j++) {
-    if ((!gpu_sprite_table[j].active) || (id == j)) {
+    if ((!gpu_sprite_table[j].active) || !sprite_is_enabled(&gpu_sprite_table[j]) || (id == j)) {
       continue;
     }
 
@@ -663,7 +705,7 @@ void display_gpu_sprite_detect_collisions(uint8_t id) {
             uint8_t pixel2 = gpu_sprite_table[j].image_ptr[(y - gpu_sprite_table[j].y) * gpu_sprite_table[j].width + (x - gpu_sprite_table[j].x)];
 
             if ((pixel1 != 0xff) && (pixel2 != 0xff)) {
-              gpu_reg[0x22 + number_of_collisions++] = j;
+              gpu_reg[GPU_COLLISION_FIRST + number_of_collisions++] = j;
               goto next_sprite;
             }
           }
@@ -673,14 +715,14 @@ void display_gpu_sprite_detect_collisions(uint8_t id) {
   next_sprite:
     continue;
   }
-  gpu_reg[0x1f] = 0;
-  gpu_reg[0x21] = number_of_collisions;
+  gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
+  gpu_reg[GPU_COLLISION_COUNT] = number_of_collisions;
   return;
 }
 
 static uint8_t display_gpu_read_callback(uint16_t address) {
   uint8_t reg = address - gpu_registers_address;
-  gpu_reg[0x1e] = rand() & 0xff;
+  gpu_reg[GPU_RANDOM_REGISTER] = rand() & 0xff;
   if (reg < NUM_GPU_REGISTERS) {
     return gpu_reg[reg];
   } else {
@@ -690,8 +732,13 @@ static uint8_t display_gpu_read_callback(uint16_t address) {
 
 void display_gpu_write_callback(uint16_t address, uint8_t value) {
   uint8_t reg = address - gpu_registers_address;
+  if (reg >= NUM_GPU_REGISTERS) {
+    return;
+  }
+
   gpu_reg[reg] = value;
   if (reg == GPU_OPERATION_REGISTER) {
+    gpu_reg[GPU_STATUS_REGISTER] = GPU_STATUS_OK;
     switch (value) {
       case 0x00:
         display_gpu_set_colour(gpu_reg[1], gpu_reg[2], gpu_reg[0]);
@@ -699,7 +746,7 @@ void display_gpu_write_callback(uint16_t address, uint8_t value) {
         break;
 
       case 0x01:
-        gpu_reg[0x1d] = display_gpu_get_colour(gpu_reg[1], gpu_reg[2]);
+        gpu_reg[GPU_RESULT0_REGISTER] = display_gpu_get_colour(gpu_reg[1], gpu_reg[2]);
         break;
 
       case 0x10:
@@ -790,6 +837,10 @@ void display_gpu_write_callback(uint16_t address, uint8_t value) {
         border_right = gpu_reg[3];
         border_bottom = gpu_reg[4];
         display_updated = true;
+        break;
+
+      default:
+        gpu_reg[GPU_STATUS_REGISTER] = GPU_STATUS_BAD_OPCODE;
         break;
     }
   }
@@ -886,38 +937,11 @@ int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* ide
 
   /*
   ** Initialise the GPU board.  This isn't based on a real board, but
-  ** is just something nice to play with
-  ** The GPU board is 256x256 pixels 256 colour graphics.
-  ** The colour palette follows a standard:
-  ** 0x00 - 0x0f: grayscale
-  ** 0x10 - 0x1f: standard 16 colour RGB
-  ** 0x20 - 0xEF: RGB, six levels for each
-  ** 0xF0 - 0xFF: Unused - black
+  ** is just something nice to play with.
   **
-  ** The interface is through memory mapped registers.
-  ** The GPU provides (as far as the 6502 is concerned) instant drawing of shapes and sprite handling
-  ** User's program writes parameters to register 0x00 through 0x0E (the number of parameters is defined by the operation)
-  ** then writes a operation code to register 0x0f.  GPU executes this operation immediately.
-  ** Register		Function
-  ** 0x00			Colour used to draw
-  ** 0x01			Parameter 1
-  ** ...
-  ** 0x0c			return value 1
-  ** 0x0d			return value 2
-  ** 0x0e			random number
-  ** 0x0f			Operation:
-  **					0x00: Set pixel (0x01,0x02) to colour
-  **					0x01: Read colour of pixel (0x01,0x02) into return value 1
-  **					0x10: Draw line (0x01,0x02) to (0x03,0x04)
-  **					0x11: Draw line (0x01,0x02) to (0x03,0x04), then copy (0x0x,0x04) into (0x01,0x02) (allows for draw "LineTo")
-  **					0x20: Fill triangle (0x01,0x02), (0x03,0x04) and (0x05,0x06)
-  **					0x30: Fill rectangle (0x01,0x02) to (0x03,0x04)
-  **					0x40: Draw ellipse (0x01,0x02) to (0x03,0x04)
-  **					0x41: Fill ellipse (0x01,0x02) to (0x03,0x04)
-  **					0x80: Create stamp 0x01: id, 0x02: width, 0x03: height, 0x04: low address, 0x05 high_address
-  **					0x81: Place stamp 0x01: id, 0x02:x, 0x03: y
-  **					0xe0: Scroll horizontal by 0x01 (signed) vertical by 0x02 (signed)
-  **					0xf0: Specify border 0x01 = left, 0x02 = top, 0x03=right, 0x04 = bottom
+  ** API contract is documented in docs/GPU_REGISTER_SPEC.md.
+  ** Programs write parameters to registers, then write opcode to $7F.
+  ** The command executes immediately.
   */
   else if (strcmp(identifier, "gpu") == 0) {
     system_register_memory_mapped_device(address, address + NUM_GPU_REGISTERS - 1, display_gpu_read_callback, display_gpu_write_callback, true);
@@ -927,6 +951,10 @@ int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* ide
     memset(gpu_pixels, 0, sizeof(gpu_pixels));
     memset(gpu_stamp_table, 0, sizeof(gpu_stamp_table));
     memset(gpu_sprite_table, 0, sizeof(gpu_sprite_table));
+    gpu_reg[GPU_PLANE_WRITE_MASK] = 0x0f;
+    gpu_reg[GPU_PLANE_DISPLAY_MASK] = 0x01;
+    gpu_reg[GPU_STATUS_REGISTER] = GPU_STATUS_OK;
+    gpu_reg[GPU_ERROR_REGISTER] = GPU_STATUS_OK;
 
     // Create a standard 256 colour palette
     for (int i = 0; i < 16; i++) {
