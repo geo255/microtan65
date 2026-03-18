@@ -32,19 +32,24 @@ void save_window_settings(SDL_Window* window) {
   FILE* file = fopen(SETTINGS_FILE, "w");
 
   if (file) {
-    fprintf(file, "%d %d %d %d", x, y, width, height);
+    fprintf(file, "%d %d %d %d %d", x, y, width, height, (int)display_get_hires_mode());
     fclose(file);
   }
 }
 
-void load_window_settings(int* x, int* y, int* width, int* height) {
+void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode) {
   FILE* file = fopen(SETTINGS_FILE, "r");
+  *display_mode = DISPLAY_HIRES_MODE_NONE;
 
   if (file) {
-    int values_read = fscanf(file, "%d %d %d %d", x, y, width, height);
-    if (values_read != 4) {
+    int display_mode_raw = 0;
+    int values_read = fscanf(file, "%d %d %d %d %d", x, y, width, height, &display_mode_raw);
+
+    if (values_read < 4) {
       *x = SDL_WINDOWPOS_CENTERED;
       *y = SDL_WINDOWPOS_CENTERED;
+    } else if ((values_read >= 5) && (display_mode_raw >= (int)DISPLAY_HIRES_MODE_NONE) && (display_mode_raw <= (int)DISPLAY_HIRES_MODE_EXTENDED)) {
+      *display_mode = (display_hires_mode_t)display_mode_raw;
     }
     fclose(file);
   }
@@ -148,6 +153,18 @@ static bool parse_hex_range(const char* text, uint16_t* start, uint16_t* end) {
   return true;
 }
 
+static const char* display_mode_name(display_hires_mode_t mode) {
+  switch (mode) {
+    case DISPLAY_HIRES_MODE_TANGERINE:
+      return "Tangerine hi-res (RGBI)";
+    case DISPLAY_HIRES_MODE_EXTENDED:
+      return "GPU";
+    case DISPLAY_HIRES_MODE_NONE:
+    default:
+      return "Text/chunky";
+  }
+}
+
 static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
   const char* menu_items[] = {
     "Reset system",
@@ -156,10 +173,11 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
     "Load program file (.m65/.hex/.ihx/.ihex)",
     "Save snapshot (.m65)",
     "Save Intel HEX address range",
+    "Display options",
     "Help",
     "Cancel"};
 
-  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 8, 0);
+  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 9, 0);
   char file_name[512];
   char range_input[128];
   int rv;
@@ -239,10 +257,32 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
       }
       break;
     }
-    case 6:
+    case 6: {
+      const char* display_items[] = {
+        "Text/chunky only",
+        "Tangerine hi-res (RGBI)",
+        "GPU display mode",
+        "Cancel"};
+      int current_mode = (int)display_get_hires_mode();
+      if (current_mode < 0 || current_mode > 2) {
+        current_mode = 0;
+      }
+
+      int display_selection = popup_menu_select(renderer, "Display Options", display_items, 4, current_mode);
+      if (display_selection >= 0 && display_selection <= 2) {
+        display_set_hires_mode((display_hires_mode_t)display_selection);
+        char message[96];
+        snprintf(message, sizeof(message), "Display mode: %s", display_mode_name(display_get_hires_mode()));
+        popup_show(renderer, message);
+      }
+      break;
+    }
+
+    case 7:
       popup_show(renderer,
                  "F1: Open menu\n"
                  "Menu has reset/input/load/save actions\n"
+                 "Menu -> Display options: Text/Tangerine/GPU\n"
                  "F2: Select hex keypad input\n"
                  "F3: Select ASCII keyboard input\n"
                  "F5: Reset system\n");
@@ -275,7 +315,9 @@ int main(int argc, char* argv[]) {
 
   SDL_Init(SDL_INIT_VIDEO);
   int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED, width = DISPLAY_WIDTH, height = DISPLAY_HEIGHT;
-  load_window_settings(&x, &y, &width, &height);
+  display_hires_mode_t saved_display_mode = DISPLAY_HIRES_MODE_NONE;
+  load_window_settings(&x, &y, &width, &height, &saved_display_mode);
+  display_set_hires_mode(saved_display_mode);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
   SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, DISPLAY_WIDTH, DISPLAY_HEIGHT);

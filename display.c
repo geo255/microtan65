@@ -48,6 +48,7 @@ static const char* hires_identifier[4] = {"red", "green", "blue", "intensity"};
 static uint8_t display_hires_memory[4][8192];
 static uint8_t display_hires_bank[4];
 static uint16_t display_hires_start_address[4];
+static uint8_t display_hires_selected_bank = 0;
 
 // Extended graphics "GPU board"
 static uint16_t gpu_registers_address = 0x0000;
@@ -90,17 +91,18 @@ void chunky_disable_callback(uint16_t address, uint8_t value) {
 }
 
 static uint8_t hires_display_read_callback(uint16_t address) {
-  uint8_t current_bank = system_read_memory(0xffff);
+  uint8_t current_bank = display_hires_selected_bank;
+  uint8_t* main_ram = system_get_memory_pointer(0x0000);
   for (int index = 0; index < 4; index++) {
     if (display_hires_bank[index] == current_bank) {
       return display_hires_memory[index][address - display_hires_start_address[index]];
     }
   }
-  return 0;
+  return main_ram[address];
 }
 
 void hires_display_write_callback(uint16_t address, uint8_t value) {
-  uint8_t current_bank = system_read_memory(0xffff);
+  uint8_t current_bank = display_hires_selected_bank;
   for (int index = 0; index < 4; index++) {
     if (display_hires_bank[index] == current_bank) {
       display_hires_memory[index][address - display_hires_start_address[index]] = value;
@@ -108,6 +110,11 @@ void hires_display_write_callback(uint16_t address, uint8_t value) {
     }
   }
   display_updated = true;
+}
+
+static void hires_bank_select_write_callback(uint16_t address, uint8_t value) {
+  (void)address;
+  display_hires_selected_bank = value;
 }
 
 void display_render(uint32_t* pixels) {
@@ -224,6 +231,19 @@ bool display_updated_event() {
   display_updated = false;
   display_updated = false;
   return rv;
+}
+
+void display_set_hires_mode(display_hires_mode_t new_mode) {
+  if ((new_mode < DISPLAY_HIRES_MODE_NONE) || (new_mode > DISPLAY_HIRES_MODE_EXTENDED)) {
+    return;
+  }
+
+  hires_mode = new_mode;
+  display_updated = true;
+}
+
+display_hires_mode_t display_get_hires_mode() {
+  return hires_mode;
 }
 
 uint8_t* display_get_hires_memory_pointer(int board_index) {
@@ -796,7 +816,8 @@ int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* ide
     system_register_memory_mapped_device(address, address + 0x1ff, main_display_read_callback, main_display_write_callback, true);
     system_register_memory_mapped_device(param, param, chunky_enable_callback, NULL, false);
     system_register_memory_mapped_device(param + 3, param + 3, NULL, chunky_disable_callback, false);
-    system_register_memory_mapped_device(address, address + 0x1fff, hires_display_read_callback, hires_display_write_callback, true);
+    system_register_memory_mapped_device(0x8000, 0x9fff, hires_display_read_callback, hires_display_write_callback, false);
+    system_register_memory_mapped_device(0xffff, 0xffff, NULL, hires_bank_select_write_callback, false);
     text_display_ram = system_get_memory_pointer(address);
 
     // Load in the character set ROM
@@ -851,12 +872,15 @@ int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* ide
   */
   else if (strncmp(identifier, "hires", 5) == 0) {
     int index;
-    for (index = 0; (index < 4) && (strstr(identifier, hires_identifier[index]) != 0); index++)
+    for (index = 0; (index < 4) && (strstr(identifier, hires_identifier[index]) == 0); index++)
       ;
     if (index < 4) {
       display_hires_bank[index] = bank;
       display_hires_start_address[index] = address;
       memset(&display_hires_memory[index][0], 0, 8192);
+      if (display_hires_selected_bank == 0) {
+        display_hires_selected_bank = bank;
+      }
     }
   }
 
