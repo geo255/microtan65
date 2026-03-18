@@ -63,7 +63,7 @@ To start with a program loaded into memory:
 eg.
 
 ```
-./microtan65 defender.m65
+./microtan65 programs/defender.m65
 ```
 
 The Microtan TANBUG and BASIC are case sensitive and commands are all upper case, so the emulator swaps lower case and upper case, so you don't need to press CAPS yourself.

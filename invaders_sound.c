@@ -1,3 +1,4 @@
+#include "external_filenames.h"
 #include "invaders_sound.h"
 #include "system.h"
 #include <SDL.h>
@@ -40,13 +41,13 @@ static bool do_explosion = true;
 
 /* Sound file paths */
 static const char* sound_files[] = {
-  "sounds/saucer.wav",     /* SND_SAUCER */
-  "sounds/saucerend.wav",  /* SND_SAUCEREND */
-  "sounds/heartbeat1.wav", /* SND_HEARTBEAT1 */
-  "sounds/heartbeat2.wav", /* SND_HEARTBEAT2 */
-  "sounds/laser.wav",      /* SND_LASER */
-  "sounds/hit.wav",        /* SND_HIT */
-  "sounds/explosion.wav"   /* SND_EXPLOSION */
+  ASSETS_SOUNDS_DIRECTORY "/saucer.wav",     /* SND_SAUCER */
+  ASSETS_SOUNDS_DIRECTORY "/saucerend.wav",  /* SND_SAUCEREND */
+  ASSETS_SOUNDS_DIRECTORY "/heartbeat1.wav", /* SND_HEARTBEAT1 */
+  ASSETS_SOUNDS_DIRECTORY "/heartbeat2.wav", /* SND_HEARTBEAT2 */
+  ASSETS_SOUNDS_DIRECTORY "/laser.wav",      /* SND_LASER */
+  ASSETS_SOUNDS_DIRECTORY "/hit.wav",        /* SND_HIT */
+  ASSETS_SOUNDS_DIRECTORY "/explosion.wav"   /* SND_EXPLOSION */
 };
 
 /* ---------------------------------------------------------------------------

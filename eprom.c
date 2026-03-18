@@ -1,8 +1,9 @@
 #include "eprom.h"
+#include "external_filenames.h"
 #include "function_return_codes.h"
 #include "system.h"
 
-int eprom_load(char* file_name, uint16_t address) {
+int eprom_load(const char* file_name, uint16_t address) {
   uint8_t* memory_ptr = system_get_memory_pointer(address);
   FILE* eprom_file = fopen(file_name, "rb");
 
@@ -35,11 +36,15 @@ int eprom_load(char* file_name, uint16_t address) {
 
 int eprom_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier) {
   (void)bank;
-  (void)address;
   (void)param;
-  (void)identifier;
-  int rv;
-  rv = eprom_load("microtan.rom", 0xC000);
+
+  const char* eprom_filename = MICROTAN_ROM_FILENAME;
+
+  if ((identifier != NULL) && (identifier[0] != '\0')) {
+    eprom_filename = identifier;
+  }
+
+  int rv = eprom_load(eprom_filename, address);
 
   if (rv != RV_OK) {
     return rv;

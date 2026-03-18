@@ -42,10 +42,11 @@ run: $(TARGET)
 smoke:
 >missing=0; \
 >for f in \
->  microtan.rom \
->  charset.rom \
->  arial.ttx \
->  cour.ttf \
+>  assets/microtan.rom \
+>  assets/charset.rom \
+>  assets/fonts/arial.ttx \
+>  assets/fonts/cour.ttf \
+>  assets/sounds/saucer.wav \
 >  programs/adventure.m65 \
 >  programs/astrofighter.m65 \
 >  programs/berzerk.m65 \

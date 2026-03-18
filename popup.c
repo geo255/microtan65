@@ -11,6 +11,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "external_filenames.h"
+
 #define POPUP_MAX_LINES 64
 #define POPUP_MAX_ITEMS 32
 
@@ -93,21 +95,28 @@ static int popup_font_size_for_renderer(SDL_Renderer* renderer) {
   return 24;
 }
 
-static bool popup_find_font(char* font_path, size_t font_path_size) {
-  DIR* d = opendir(".");
+static bool popup_find_font_in_directory(const char* directory, char* font_path, size_t font_path_size) {
+  DIR* d = opendir(directory);
 
   if (!d) {
     return false;
   }
 
   struct dirent* dir;
-  font_path[0] = '\0';
 
   while ((dir = readdir(d)) != NULL) {
     char* dot = strrchr(dir->d_name, '.');
 
-    if (dot && strcmp(dot, ".ttf") == 0) {
-      snprintf(font_path, font_path_size, "%s", dir->d_name);
+    if (dot && (strcasecmp(dot, ".ttf") == 0)) {
+      if ((directory[0] == '.') && (directory[1] == '\0')) {
+        snprintf(font_path, font_path_size, "%s", dir->d_name);
+      } else {
+        size_t required_length = strlen(directory) + 1 + strlen(dir->d_name) + 1;
+        if (required_length >= font_path_size) {
+          continue;
+        }
+        snprintf(font_path, font_path_size, "%s/%s", directory, dir->d_name);
+      }
       break;
     }
   }
@@ -116,13 +125,40 @@ static bool popup_find_font(char* font_path, size_t font_path_size) {
   return font_path[0] != '\0';
 }
 
-static TTF_Font* popup_open_font(SDL_Renderer* renderer) {
-  char font_path[256];
+static bool popup_find_font(char* font_path, size_t font_path_size) {
+  const char* font_directories[] = {
+    ASSETS_FONTS_DIRECTORY,
+    ASSETS_DIRECTORY,
+    "."};
 
-  if (!popup_find_font(font_path, sizeof(font_path))) {
-    printf("Font file missing\r\n");
+  font_path[0] = '\0';
+
+  for (size_t i = 0; i < (sizeof(font_directories) / sizeof(font_directories[0])); i++) {
+    if (popup_find_font_in_directory(font_directories[i], font_path, font_path_size)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static TTF_Font* popup_try_open_font(const char* path, int font_size) {
+  if ((path == NULL) || (path[0] == '\0')) {
     return NULL;
   }
+
+  if (access(path, R_OK) != 0) {
+    return NULL;
+  }
+
+  return TTF_OpenFont(path, font_size);
+}
+
+static TTF_Font* popup_open_font(SDL_Renderer* renderer) {
+  const char* preferred_fonts[] = {
+    POPUP_FONT_FILENAME,
+    "cour.ttf"};
+  char fallback_font_path[256];
 
   if (TTF_WasInit() == 0 && TTF_Init() == -1) {
     printf("TTF_Init: %s\n", TTF_GetError());
@@ -130,13 +166,26 @@ static TTF_Font* popup_open_font(SDL_Renderer* renderer) {
   }
 
   int font_size = popup_font_size_for_renderer(renderer);
-  TTF_Font* font = TTF_OpenFont(font_path, font_size);
-  if (font == NULL) {
-    printf("TTF_OpenFont: %s\n", TTF_GetError());
-    return NULL;
+
+  for (size_t i = 0; i < (sizeof(preferred_fonts) / sizeof(preferred_fonts[0])); i++) {
+    TTF_Font* font = popup_try_open_font(preferred_fonts[i], font_size);
+
+    if (font != NULL) {
+      return font;
+    }
   }
 
-  return font;
+  fallback_font_path[0] = '\0';
+  if (popup_find_font(fallback_font_path, sizeof(fallback_font_path))) {
+    TTF_Font* font = popup_try_open_font(fallback_font_path, font_size);
+
+    if (font != NULL) {
+      return font;
+    }
+  }
+
+  printf("Font file missing\r\n");
+  return NULL;
 }
 
 static void popup_draw_frame(SDL_Renderer* renderer, const SDL_Rect* popup_rect) {

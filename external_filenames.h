@@ -1,8 +1,15 @@
 #ifndef __EXTERNAL_FILENAMES_H__
 #define __EXTERNAL_FILENAMES_H__
 
-#define CHARSET_ROM_FILENAME "charset.rom"
-#define TANBUG_ROM_FILENAME  "tanbug.rom"
-#define BASIC_ROM_FILENAME   "basic.rom"
+#define ASSETS_DIRECTORY      "assets"
+#define ASSETS_FONTS_DIRECTORY ASSETS_DIRECTORY "/fonts"
+#define ASSETS_SOUNDS_DIRECTORY ASSETS_DIRECTORY "/sounds"
+
+#define CHARSET_ROM_FILENAME  ASSETS_DIRECTORY "/charset.rom"
+#define MICROTAN_ROM_FILENAME ASSETS_DIRECTORY "/microtan.rom"
+#define TANBUG_ROM_FILENAME   ASSETS_DIRECTORY "/tanbug.rom"
+#define BASIC_ROM_FILENAME    ASSETS_DIRECTORY "/basic.rom"
+
+#define POPUP_FONT_FILENAME   ASSETS_FONTS_DIRECTORY "/cour.ttf"
 
 #endif // __EXTERNAL_FILENAMES_H__
