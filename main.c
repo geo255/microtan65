@@ -184,7 +184,12 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten) {
       const char* load_extensions[] = {".m65", ".hex", ".ihx", ".ihex"};
 
       if (popup_file_select(renderer, "Load Program", ".", load_extensions, 4, false, "", file_name, sizeof(file_name))) {
+        // Match startup load behavior: reset hardware state before loading a program file.
+        system_reset();
         rv = system_load_program_file(file_name);
+        if ((rv == RV_OK) && (strstr(file_name, "berzerk") != NULL)) {
+          keyboard_use_hex_keypad(true);
+        }
         if (rv == RV_OK) {
           popup_show(renderer, "Program loaded.");
         } else {
