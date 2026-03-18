@@ -204,6 +204,5 @@ int invaders_sound_initialise(uint8_t bank, uint16_t address, uint16_t param, ch
   system_register_memory_mapped_device(address, address, NULL, invaders_sound_write_callback, true);
 
   invaders_sound_initialized = true;
-  printf("Space Invaders sound effects initialized\n");
   return 0;
 }

@@ -433,10 +433,6 @@ int ay8910_initialise(uint8_t bank, uint16_t address, uint16_t param, char* iden
   } else {
     /* Start playback */
     SDL_PauseAudioDevice(audio_device, 0);
-    printf("AY8910 audio initialized: %d Hz, %d-bit, %d channel(s)\n",
-           have.freq,
-           SDL_AUDIO_BITSIZE(have.format),
-           have.channels);
   }
 
   ay8910_initialised = true;
