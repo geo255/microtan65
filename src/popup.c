@@ -108,14 +108,24 @@ static bool popup_find_font_in_directory(const char* directory, char* font_path,
     char* dot = strrchr(dir->d_name, '.');
 
     if (dot && (strcasecmp(dot, ".ttf") == 0)) {
+      size_t name_length = strlen(dir->d_name);
+
       if ((directory[0] == '.') && (directory[1] == '\0')) {
-        snprintf(font_path, font_path_size, "%s", dir->d_name);
-      } else {
-        size_t required_length = strlen(directory) + 1 + strlen(dir->d_name) + 1;
-        if (required_length >= font_path_size) {
+        if (name_length + 1 > font_path_size) {
           continue;
         }
-        snprintf(font_path, font_path_size, "%s/%s", directory, dir->d_name);
+
+        memcpy(font_path, dir->d_name, name_length + 1);
+      } else {
+        size_t directory_length = strlen(directory);
+        size_t required_length = directory_length + 1 + name_length + 1;
+        if (required_length > font_path_size) {
+          continue;
+        }
+
+        memcpy(font_path, directory, directory_length);
+        font_path[directory_length] = '/';
+        memcpy(font_path + directory_length + 1, dir->d_name, name_length + 1);
       }
       break;
     }
