@@ -104,6 +104,16 @@
 .equ HEXPCK,                 TANBUG_HEXPCK
 
 ; ---------------------------------------------------------------------------
+; Main display memory and mode controls
+; ---------------------------------------------------------------------------
+.equ DISPLAY_RAM_START,      $0200
+.equ DISPLAY_RAM_END,        $03FF
+.equ CHUNKY_ENABLE,          $BFF0 ; Read to enable for subsequent display writes
+.equ CHUNKY_DISABLE,         $BFF3 ; Write to disable for subsequent display writes
+.equ INVERSE_ENABLE,         $BFF4 ; Read to enable for subsequent display writes
+.equ INVERSE_DISABLE,        $BFF7 ; Write to disable for subsequent display writes
+
+; ---------------------------------------------------------------------------
 ; AY-3-8910 PSG memory-mapped interface addresses
 ; ---------------------------------------------------------------------------
 .equ AY1_ADDR,       $BC00

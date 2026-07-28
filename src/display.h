@@ -25,6 +25,7 @@ extern void display_gpu_set_colour(uint8_t x, uint8_t y, uint8_t colour);
 extern uint8_t display_gpu_get_colour(uint8_t x, uint8_t y);
 extern uint8_t display_hrg_function(uint8_t px, uint8_t py, uint8_t function);
 extern int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* identifier);
+extern void display_reset(uint8_t bank, uint16_t address);
 extern void display_close();
 
 #endif // __DISPLAY_H__

@@ -88,7 +88,7 @@ static bool file_name_has_extension(const char* file_name, const char* extension
 device_configuration_t system_devices[] =
   {
     {keyboard_initialise, NULL, NULL, 0x00, 0xbff0, 0x0000, "keyboard"},
-    {display_initialise, NULL, NULL, 0x00, 0x0200, 0xbff0, "main display"},
+    {display_initialise, display_reset, NULL, 0x00, 0x0200, 0xbff0, "main display"},
     {display_initialise, NULL, NULL, 0x01, 0x8000, 0x0000, "hires red"},
     {display_initialise, NULL, NULL, 0x02, 0x8000, 0x0000, "hires green"},
     {display_initialise, NULL, NULL, 0x03, 0x8000, 0x0000, "hires blue"},
@@ -527,7 +527,6 @@ void system_close() {
     device++;
   }
 }
-
 
 
 

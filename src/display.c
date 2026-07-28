@@ -54,7 +54,9 @@ static uint8_t chunky_rom[4096];
 static uint8_t white_array[8192];
 static uint8_t* text_display_ram = NULL;
 static uint8_t chunky_graphics_bits[512];
+static uint8_t inverse_video_bits[512];
 static bool chunky_bit = false;
+static bool inverse_bit = false;
 
 // 4x Hi-Res graphics boards
 static const char* hires_identifier[4] = {"red", "green", "blue", "intensity"};
@@ -90,6 +92,7 @@ static uint8_t main_display_read_callback(uint16_t address) {
 void main_display_write_callback(uint16_t address, uint8_t value) {
   (void)value;
   chunky_graphics_bits[address - 0x0200] = chunky_bit;
+  inverse_video_bits[address - 0x0200] = inverse_bit;
   display_updated = true;
 }
 
@@ -103,6 +106,26 @@ void chunky_disable_callback(uint16_t address, uint8_t value) {
   (void)address;
   (void)value;
   chunky_bit = false;
+}
+
+static uint8_t inverse_enable_callback(uint16_t address) {
+  (void)address;
+  inverse_bit = true;
+  return 0;
+}
+
+static void inverse_disable_callback(uint16_t address, uint8_t value) {
+  (void)address;
+  (void)value;
+  inverse_bit = false;
+}
+
+void display_reset(uint8_t bank, uint16_t address) {
+  (void)bank;
+  (void)address;
+  memset(inverse_video_bits, 0, sizeof(inverse_video_bits));
+  inverse_bit = false;
+  display_updated = true;
 }
 
 static uint8_t hires_display_read_callback(uint16_t address) {
@@ -136,6 +159,7 @@ void display_render(uint32_t* pixels) {
   // Render the text display into the white_array pixel map
   uint8_t* character_value = text_display_ram;
   uint8_t* chunky_bit = chunky_graphics_bits;
+  uint8_t* inverse = inverse_video_bits;
 
   if (NULL == character_value) {
     memset(white_array, 0xAA, sizeof(white_array));
@@ -148,12 +172,14 @@ void display_render(uint32_t* pixels) {
 
       // Copy the character data into the white_array
       for (int row = 0; row < 16; row++) {
-        *b = *character_data++;
+        uint8_t pixels = *character_data++;
+        *b = *inverse ? (uint8_t)~pixels : pixels;
         b += 32;
       }
 
       character_value++;
       chunky_bit++;
+      inverse++;
     }
   }
 
@@ -867,6 +893,8 @@ int display_initialise(uint8_t bank, uint16_t address, uint16_t param, char* ide
     system_register_memory_mapped_device(address, address + 0x1ff, main_display_read_callback, main_display_write_callback, true);
     system_register_memory_mapped_device(param, param, chunky_enable_callback, NULL, false);
     system_register_memory_mapped_device(param + 3, param + 3, NULL, chunky_disable_callback, false);
+    system_register_memory_mapped_device(param + 4, param + 4, inverse_enable_callback, NULL, false);
+    system_register_memory_mapped_device(param + 7, param + 7, NULL, inverse_disable_callback, false);
     system_register_memory_mapped_device(0x8000, 0x9fff, hires_display_read_callback, hires_display_write_callback, false);
     system_register_memory_mapped_device(0xffff, 0xffff, NULL, hires_bank_select_write_callback, false);
     text_display_ram = system_get_memory_pointer(address);
