@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "colour_vdu.h"
 #include "cpu_6502.h"
 #include "display.h"
 #include "eprom.h"
@@ -114,37 +115,53 @@ void save_window_settings(SDL_Window* window, int cpu_clock_frequency, const cha
 
   if (file) {
     const char* save_directory = (file_dialog_directory && (*file_dialog_directory != '\0')) ? file_dialog_directory : ".";
-    fprintf(file, "%d %d %d %d %d %d\n%s\n", x, y, width, height, (int)display_get_hires_mode(), cpu_clock_frequency, save_directory);
+    fprintf(file, "%d %d %d %d %d %d %d\n%s\n",
+            x, y, width, height, (int)display_get_hires_mode(),
+            cpu_clock_frequency, colour_vdu_get_enabled() ? 1 : 0,
+            save_directory);
     fclose(file);
   }
 }
 
-void load_window_settings(int* x, int* y, int* width, int* height, display_hires_mode_t* display_mode, int* cpu_clock_frequency, char* file_dialog_directory, size_t file_dialog_directory_size) {
+void load_window_settings(int* x, int* y, int* width, int* height,
+                          display_hires_mode_t* display_mode,
+                          int* cpu_clock_frequency, bool* colour_vdu_enabled,
+                          char* file_dialog_directory,
+                          size_t file_dialog_directory_size) {
   FILE* file = fopen(SETTINGS_FILE, "r");
   char geometry_line[256];
   char path_line[PATH_MAX];
   *display_mode = DISPLAY_HIRES_MODE_NONE;
   *cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
+  *colour_vdu_enabled = false;
   choose_default_file_directory(file_dialog_directory, file_dialog_directory_size);
 
   if (file) {
     int display_mode_raw = 0;
     int cpu_clock_frequency_raw = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
+    int colour_vdu_enabled_raw = 0;
     int values_read = 0;
 
     if (fgets(geometry_line, sizeof(geometry_line), file) != NULL) {
-      values_read = sscanf(geometry_line, "%d %d %d %d %d %d", x, y, width, height, &display_mode_raw, &cpu_clock_frequency_raw);
+      values_read = sscanf(geometry_line, "%d %d %d %d %d %d %d",
+                           x, y, width, height, &display_mode_raw,
+                           &cpu_clock_frequency_raw, &colour_vdu_enabled_raw);
     }
 
     if (values_read < 4) {
       *x = SDL_WINDOWPOS_CENTERED;
       *y = SDL_WINDOWPOS_CENTERED;
-    } else if ((values_read >= 5) && (display_mode_raw >= (int)DISPLAY_HIRES_MODE_NONE) && (display_mode_raw <= (int)DISPLAY_HIRES_MODE_EXTENDED)) {
+    } else if ((values_read >= 5) &&
+               (display_mode_raw >= (int)DISPLAY_HIRES_MODE_NONE) &&
+               (display_mode_raw <= (int)DISPLAY_HIRES_MODE_COLOUR_VDU)) {
       *display_mode = (display_hires_mode_t)display_mode_raw;
     }
 
     if ((values_read >= 6) && is_supported_clock_frequency(cpu_clock_frequency_raw)) {
       *cpu_clock_frequency = cpu_clock_frequency_raw;
+    }
+    if (values_read >= 7) {
+      *colour_vdu_enabled = colour_vdu_enabled_raw != 0;
     }
 
     // Optional persisted file-dialog directory line.
@@ -263,9 +280,40 @@ static const char* display_mode_name(display_hires_mode_t mode) {
       return "Tangerine hi-res (RGBI)";
     case DISPLAY_HIRES_MODE_EXTENDED:
       return "GPU";
+    case DISPLAY_HIRES_MODE_COLOUR_VDU:
+      return "Mousepacket Colour VDU";
     case DISPLAY_HIRES_MODE_NONE:
     default:
       return "Text/chunky";
+  }
+}
+
+static void integer_scaled_display_size(int requested_height,
+                                        int* width, int* height) {
+  int native_width;
+  int native_height;
+  display_get_render_size(&native_width, &native_height);
+
+  int scale = (requested_height + native_height / 2) / native_height;
+  if (scale < 2) {
+    scale = 2;
+  }
+
+  *width = native_width * scale;
+  *height = native_height * scale;
+}
+
+static void resize_window_to_integer_scale(SDL_Window* window,
+                                           int requested_height) {
+  int width;
+  int height;
+  int target_width;
+  int target_height;
+  SDL_GetWindowSize(window, &width, &height);
+  integer_scaled_display_size(requested_height, &target_width, &target_height);
+
+  if ((width != target_width) || (height != target_height)) {
+    SDL_SetWindowSize(window, target_width, target_height);
   }
 }
 
@@ -404,18 +452,35 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
         "Text/chunky only",
         "Tangerine hi-res (RGBI)",
         "GPU display mode",
+        "Mousepacket Colour VDU output",
+        colour_vdu_get_enabled() ? "Disable Colour VDU card" : "Enable Colour VDU card",
         "Cancel"};
       int current_mode = (int)display_get_hires_mode();
-      if (current_mode < 0 || current_mode > 2) {
+      if (current_mode < 0 || current_mode > 3) {
         current_mode = 0;
       }
 
-      int display_selection = popup_menu_select(renderer, "Display Options", display_items, 4, current_mode);
-      if (display_selection >= 0 && display_selection <= 2) {
+      int display_selection = popup_menu_select(renderer, "Display Options", display_items, 6, current_mode);
+      if (display_selection >= 0 && display_selection <= 3) {
+        if ((display_selection == DISPLAY_HIRES_MODE_COLOUR_VDU) &&
+            !colour_vdu_get_enabled()) {
+          popup_show(renderer, "Enable the Colour VDU card before selecting its output.");
+          break;
+        }
         display_set_hires_mode((display_hires_mode_t)display_selection);
         char message[96];
         snprintf(message, sizeof(message), "Display mode: %s", display_mode_name(display_get_hires_mode()));
         popup_show(renderer, message);
+      } else if (display_selection == 4) {
+        bool enabled = !colour_vdu_get_enabled();
+        colour_vdu_set_enabled(enabled);
+        if (!enabled &&
+            (display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU)) {
+          display_set_hires_mode(DISPLAY_HIRES_MODE_NONE);
+        }
+        popup_show(renderer, enabled
+          ? "Colour VDU enabled. TANBUG Ctrl-X will switch the displayed output."
+          : "Colour VDU card disabled; $A000-$A7FF is ordinary RAM.");
       }
       break;
     }
@@ -443,7 +508,8 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
       popup_show(renderer,
                  "F1: Open menu\n"
                  "Menu has reset/input/load/save actions\n"
-                 "Menu -> Display options: Text/Tangerine/GPU\n"
+                 "Menu -> Display options: Text/Tangerine/GPU/Colour VDU\n"
+                 "With Colour VDU enabled, TANBUG Ctrl-X follows its output\n"
                  "Menu -> CPU clock options: 750k/1.5M/3M/6M\n"
                  "F2: Select hex keypad input\n"
                  "F3: Select ASCII keyboard input\n"
@@ -462,6 +528,19 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  int x = SDL_WINDOWPOS_CENTERED;
+  int y = SDL_WINDOWPOS_CENTERED;
+  int width = DISPLAY_WIDTH;
+  int height = DISPLAY_HEIGHT;
+  display_hires_mode_t saved_display_mode = DISPLAY_HIRES_MODE_NONE;
+  int cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
+  bool saved_colour_vdu_enabled = false;
+  char file_dialog_directory[PATH_MAX];
+  load_window_settings(&x, &y, &width, &height, &saved_display_mode,
+                       &cpu_clock_frequency, &saved_colour_vdu_enabled,
+                       file_dialog_directory, sizeof(file_dialog_directory));
+  colour_vdu_set_enabled(saved_colour_vdu_enabled);
+  display_set_hires_mode(saved_display_mode);
   system_reset();
 
   if (argc > 1) {
@@ -476,17 +555,15 @@ int main(int argc, char* argv[]) {
   srand(time(NULL));
 
   SDL_Init(SDL_INIT_VIDEO);
-  int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED, width = DISPLAY_WIDTH, height = DISPLAY_HEIGHT;
-  display_hires_mode_t saved_display_mode = DISPLAY_HIRES_MODE_NONE;
-  int cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
-  char file_dialog_directory[PATH_MAX];
-  load_window_settings(&x, &y, &width, &height, &saved_display_mode, &cpu_clock_frequency, file_dialog_directory, sizeof(file_dialog_directory));
-  display_set_hires_mode(saved_display_mode);
+  integer_scaled_display_size(height, &width, &height);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-  SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  SDL_Texture* scanlines = create_scanline_texture(renderer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  uint32_t pixels[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+  int render_width;
+  int render_height;
+  display_get_render_size(&render_width, &render_height);
+  SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, render_width, render_height);
+  SDL_Texture* scanlines = create_scanline_texture(renderer, render_width, render_height);
+  uint32_t pixels[COLOUR_VDU_WIDTH * DISPLAY_HEIGHT];
   bool is_running = true;
   SDL_Event event;
   struct timespec start_time;
@@ -499,11 +576,37 @@ int main(int argc, char* argv[]) {
     // Execute LOOP_EXECUTE_TIME_MS's worth of instructions
     cpu_6502_execute(cpu_clock_frequency * LOOP_EXECUTE_TIME_MS / 1000);
 
+    if (colour_vdu_get_enabled() && colour_vdu_output_changed_event()) {
+      display_set_hires_mode(colour_vdu_output_selected()
+        ? DISPLAY_HIRES_MODE_COLOUR_VDU
+        : DISPLAY_HIRES_MODE_NONE);
+      display_overwritten = true;
+    }
+
     // If the display has been updated, re-render the window
-    if ((display_updated_event()) || (display_overwritten)) {
+    bool colour_vdu_updated = colour_vdu_updated_event();
+    if ((display_updated_event()) ||
+        ((display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU) && colour_vdu_updated) ||
+        (display_overwritten)) {
       display_overwritten = false;
+      int required_width;
+      int required_height;
+      display_get_render_size(&required_width, &required_height);
+      if ((required_width != render_width) || (required_height != render_height)) {
+        SDL_DestroyTexture(texture);
+        SDL_DestroyTexture(scanlines);
+        render_width = required_width;
+        render_height = required_height;
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                    SDL_TEXTUREACCESS_STREAMING,
+                                    render_width, render_height);
+        scanlines = create_scanline_texture(renderer, render_width, render_height);
+
+        SDL_GetWindowSize(window, &width, &height);
+        resize_window_to_integer_scale(window, height);
+      }
       display_render(pixels);
-      SDL_UpdateTexture(texture, NULL, pixels, DISPLAY_WIDTH * sizeof(Uint32));
+      SDL_UpdateTexture(texture, NULL, pixels, render_width * sizeof(Uint32));
       SDL_RenderClear(renderer);
       SDL_GetWindowSize(window, &width, &height);
       SDL_Rect dest_rect = {0, 0, width, height};
@@ -521,19 +624,7 @@ int main(int argc, char* argv[]) {
         case SDL_WINDOWEVENT:
           switch (event.window.event) {
             case SDL_WINDOWEVENT_RESIZED: {
-              int new_width = event.window.data1;
-              int new_height = event.window.data2 & 0xffffff00;
-
-              if (new_height < 512) {
-                new_height = 512;
-              }
-
-              // Calculate desired height for 5:4 aspect ratio
-              int desired_width = (5 * new_height) / 4;
-
-              if (new_width != desired_width) {
-                SDL_SetWindowSize(window, desired_width, new_height);
-              }
+              resize_window_to_integer_scale(window, event.window.data2);
 
               SDL_RenderClear(renderer);
               int width, height;

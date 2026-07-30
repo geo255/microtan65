@@ -49,6 +49,7 @@ smoke:
 >for f in \
 >  assets/microtan.rom \
 >  assets/charset.rom \
+>  assets/saa5050.chr \
 >  assets/fonts/arial.ttx \
 >  assets/fonts/cour.ttf \
 >  assets/sounds/saucer.wav \

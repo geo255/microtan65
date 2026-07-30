@@ -11,7 +11,8 @@
 typedef enum {
   DISPLAY_HIRES_MODE_NONE,
   DISPLAY_HIRES_MODE_TANGERINE,
-  DISPLAY_HIRES_MODE_EXTENDED
+  DISPLAY_HIRES_MODE_EXTENDED,
+  DISPLAY_HIRES_MODE_COLOUR_VDU
 } display_hires_mode_t;
 
 extern void display_render(uint32_t* pixels);
@@ -19,6 +20,7 @@ extern bool display_updated_event();
 extern uint8_t* display_get_hires_memory_pointer(int board_index);
 extern void display_set_hires_mode(display_hires_mode_t new_mode);
 extern display_hires_mode_t display_get_hires_mode();
+extern void display_get_render_size(int* width, int* height);
 extern void display_load_chunky_memory(uint8_t* src);
 extern void display_save_chunky_memory(uint8_t* dest);
 extern void display_gpu_set_colour(uint8_t x, uint8_t y, uint8_t colour);

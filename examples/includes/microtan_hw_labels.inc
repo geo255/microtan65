@@ -114,6 +114,38 @@
 .equ INVERSE_DISABLE,        $BFF7 ; Write to disable for subsequent display writes
 
 ; ---------------------------------------------------------------------------
+; Mousepacket Colour VDU
+; ---------------------------------------------------------------------------
+.equ COLOUR_VDU_RAM_START,   $A000
+.equ COLOUR_VDU_VISIBLE_END, $A63F
+.equ COLOUR_VDU_RAM_END,     $A7EF
+.equ COLOUR_VDU_LINE_WIDTH,  $A640 ; TANBUG: $20 standard, $40 Colour VDU
+.equ COLOUR_VDU_STANDARD_WIDTH, $20
+.equ COLOUR_VDU_COLOUR_WIDTH, $40
+.equ COLOUR_VDU_CURSOR_FORMAT, $A641
+.equ COLOUR_VDU_OUTPUT_CHANGE, $A642
+.equ COLOUR_VDU_CRTC_SELECT, $A7FE
+.equ COLOUR_VDU_CRTC_DATA,   $A7FF
+
+; MC6845 register indices used by the Colour VDU.
+.equ CRTC_H_TOTAL,           $00
+.equ CRTC_H_DISPLAYED,       $01
+.equ CRTC_H_SYNC_POSITION,   $02
+.equ CRTC_SYNC_WIDTH,        $03
+.equ CRTC_V_TOTAL,           $04
+.equ CRTC_V_TOTAL_ADJUST,    $05
+.equ CRTC_V_DISPLAYED,       $06
+.equ CRTC_V_SYNC_POSITION,   $07
+.equ CRTC_INTERLACE_MODE,    $08
+.equ CRTC_SCANLINES,         $09
+.equ CRTC_CURSOR_START,      $0A
+.equ CRTC_CURSOR_END,        $0B
+.equ CRTC_START_ADDRESS_HI,  $0C
+.equ CRTC_START_ADDRESS_LO,  $0D
+.equ CRTC_CURSOR_ADDRESS_HI, $0E
+.equ CRTC_CURSOR_ADDRESS_LO, $0F
+
+; ---------------------------------------------------------------------------
 ; AY-3-8910 PSG memory-mapped interface addresses
 ; ---------------------------------------------------------------------------
 .equ AY1_ADDR,       $BC00

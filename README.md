@@ -19,6 +19,17 @@ Emulates a Microtan 65 system with the following specifications:
 
 GPU register documentation: `docs/GPU_REGISTER_SPEC.md`
 
+## FIRMWARE:
+
+The standard `assets/microtan.rom` image contains the modified BASIC D3,
+XBUG, and TANBUG v3B firmware. TANBUG v3B supports both the standard display
+and the optional Colour VDU, and provides the TANBUG v3.1 TANDOS commands.
+Its Colour VDU support replaces the original hex-keypad routines.
+
+The previous ROM image is retained unchanged at
+`assets/rom_archive/microtan_original.rom` for historical and regression
+testing.
+
 ## TODO:
 
 [](https://github.com/geo255/microtan65#todo)

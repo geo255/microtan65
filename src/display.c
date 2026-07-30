@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "display.h"
+#include "colour_vdu.h"
 #include "external_filenames.h"
 #include "function_return_codes.h"
 #include "system.h"
@@ -266,6 +267,10 @@ void display_render(uint32_t* pixels) {
         sprite++;
       }
     } break;
+
+    case DISPLAY_HIRES_MODE_COLOUR_VDU:
+      colour_vdu_render(pixels);
+      break;
   }
 }
 
@@ -277,7 +282,11 @@ bool display_updated_event() {
 }
 
 void display_set_hires_mode(display_hires_mode_t new_mode) {
-  if ((new_mode < DISPLAY_HIRES_MODE_NONE) || (new_mode > DISPLAY_HIRES_MODE_EXTENDED)) {
+  if ((new_mode < DISPLAY_HIRES_MODE_NONE) || (new_mode > DISPLAY_HIRES_MODE_COLOUR_VDU)) {
+    return;
+  }
+
+  if ((new_mode == DISPLAY_HIRES_MODE_COLOUR_VDU) && !colour_vdu_get_enabled()) {
     return;
   }
 
@@ -287,6 +296,16 @@ void display_set_hires_mode(display_hires_mode_t new_mode) {
 
 display_hires_mode_t display_get_hires_mode() {
   return hires_mode;
+}
+
+void display_get_render_size(int* width, int* height) {
+  if (hires_mode == DISPLAY_HIRES_MODE_COLOUR_VDU) {
+    *width = COLOUR_VDU_WIDTH;
+    *height = COLOUR_VDU_HEIGHT;
+  } else {
+    *width = DISPLAY_WIDTH;
+    *height = DISPLAY_HEIGHT;
+  }
 }
 
 uint8_t* display_get_hires_memory_pointer(int board_index) {

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "ay8910.h"
+#include "colour_vdu.h"
 #include "cpu_6502.h"
 #include "display.h"
 #include "eprom.h"
@@ -94,6 +95,7 @@ device_configuration_t system_devices[] =
     {display_initialise, NULL, NULL, 0x03, 0x8000, 0x0000, "hires blue"},
     {display_initialise, NULL, NULL, 0x04, 0x8000, 0x0000, "hires intensity"},
     {display_initialise, NULL, display_close, 0x00, 0xbf00, 0x0000, "gpu"},
+    {colour_vdu_initialise, colour_vdu_reset, NULL, 0x00, 0xa000, 0x0000, "colour vdu"},
     {via_6522_initialise, via_6522_reset, NULL, 0x00, 0xbfc0, 0x0000, NULL},
     {via_6522_initialise, via_6522_reset, NULL, 0x00, 0xbfe0, 0x0000, NULL},
     {serial_initialise, serial_reset, NULL, 0x00, 0xbfd0, 0xbfd3, NULL},
@@ -527,7 +529,6 @@ void system_close() {
     device++;
   }
 }
-
 
 
 

@@ -150,6 +150,7 @@ It defines:
 - Microtan manual zero-page labels (`NULL`, `ICHAR`, `VDUIND`, `PCLBCK`, `BPTLO`, etc.)
 - ROM region labels (`*_ROM_START`, `*_ROM_END`)
 - TANBUG routine entry labels (`TANBUG_*`)
+- Mousepacket Colour VDU RAM and MC6845 register labels (`COLOUR_VDU_*`, `CRTC_*`)
 - AY chip interface addresses (`AY1_ADDR`..`AY8_DATA`)
 - AY register indices (`AY_REG_*`)
 - VIA register offsets (`VIA_*`)
