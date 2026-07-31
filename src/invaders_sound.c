@@ -68,6 +68,7 @@ void invaders_sound_close(void) {
     }
   }
 
+  Mix_CloseAudio();
   invaders_sound_initialized = false;
 }
 

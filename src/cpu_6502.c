@@ -5,6 +5,7 @@
 #include "display.h"
 #include "function_return_codes.h"
 #include "system.h"
+#include "tandos.h"
 #include "via_6522.h"
 
 typedef struct
@@ -1437,6 +1438,7 @@ void cpu_6502_execute(int timer_ticks) {
     if (via_6522_update(instruction_ticks)) {
       flag_irq = true;
     }
+    tandos_update(instruction_ticks);
 
     if (delayed_nmi_counter > 0) {
       delayed_nmi_counter -= instruction_length;
@@ -1486,6 +1488,7 @@ void cpu_6502_reset(uint8_t bank, uint16_t address) {
   reg_pc |= (uint16_t)system_read_memory(0xfffd) << 8;
   flag_irq = false;
   flag_nmi = false;
+  delayed_nmi_counter = 0;
   //    system_write_memory(0xbc04, 0xff);
   /*
       PlaySound(NULL, AfxGetApp()->m_hInstance, SND_PURGE);

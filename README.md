@@ -15,9 +15,12 @@ Emulates a Microtan 65 system with the following specifications:
 - 8-way Joystick (via cursor keys) connected to 6522
 - 4x Tangerine Hi_res boards, providing RGBI at 256x256
 - Prototype "GPU" graphics board - in development
+- Optional TANDOS disk controller with eight logical drives and raw disk images
 - My .m65 snapshot format and Intel HEX program loading
 
 GPU register documentation: `docs/GPU_REGISTER_SPEC.md`
+
+TANDOS controller and disk-image documentation: `docs/TANDOS.md`
 
 ## FIRMWARE:
 
@@ -83,7 +86,12 @@ The Microtan TANBUG and BASIC are case sensitive and commands are all upper case
 
 The numeric keypad "ENTER" key is used as the "LINEFEED" key on the Microtan keyboard.
 
-F1 opens an in-app menu (reset/input/load/save/help), F2 emulates the Tangerine Hex Keypad, F3 emulates the ASCII keyboard, and F5 resets the CPU.
+F1 opens an in-app menu (reset/input/load/save/disks/help), F2 emulates the Tangerine Hex Keypad, F3 emulates the ASCII keyboard, and F5 resets the CPU.
+
+The `Disks` menu enables or disables the TANDOS card and hot-mounts raw disk
+images on logical units `0:` through `7:`. Images can be mounted read/write or
+read-only, and mounts persist in `microtan_settings.txt`. The supplied
+`disks/tandos_master.img` should normally be mounted read-only on unit `0:`.
 
 ## GAME KEYS:
 

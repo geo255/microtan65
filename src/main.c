@@ -21,6 +21,7 @@
 #include "keyboard.h"
 #include "popup.h"
 #include "system.h"
+#include "tandos.h"
 #include "via_6522.h"
 
 #define MICROTAN_DEFAULT_CLOCK_FREQUENCY 750000
@@ -119,6 +120,7 @@ void save_window_settings(SDL_Window* window, int cpu_clock_frequency, const cha
             x, y, width, height, (int)display_get_hires_mode(),
             cpu_clock_frequency, colour_vdu_get_enabled() ? 1 : 0,
             save_directory);
+    tandos_save_settings(file);
     fclose(file);
   }
 }
@@ -172,6 +174,7 @@ void load_window_settings(int* x, int* y, int* width, int* height,
       }
     }
 
+    tandos_load_settings(file);
     fclose(file);
   }
 }
@@ -351,6 +354,120 @@ static const char* clock_frequency_name(int clock_frequency) {
   }
 }
 
+static const char* path_base_name(const char* path) {
+  const char* slash = path ? strrchr(path, '/') : NULL;
+  const char* backslash = path ? strrchr(path, '\\') : NULL;
+  const char* separator = slash;
+
+  if (backslash && (!separator || (backslash > separator))) {
+    separator = backslash;
+  }
+  return separator ? separator + 1 : (path ? path : "");
+}
+
+static void show_disks_menu(SDL_Renderer* renderer, char* file_dialog_directory, size_t file_dialog_directory_size) {
+  char unit_labels[TANDOS_UNIT_COUNT][128];
+  const char* menu_items[TANDOS_UNIT_COUNT + 4];
+
+  menu_items[0] = tandos_get_enabled() ? "Disable TANDOS card" : "Enable TANDOS card";
+  for (int unit = 0; unit < TANDOS_UNIT_COUNT; unit++) {
+    if (tandos_unit_mounted(unit)) {
+      snprintf(unit_labels[unit], sizeof(unit_labels[unit]), "%d: %s%s",
+               unit, path_base_name(tandos_unit_file_name(unit)),
+               tandos_unit_write_protected(unit) ? " [read-only]" : "");
+    } else {
+      snprintf(unit_labels[unit], sizeof(unit_labels[unit]), "%d: <empty>", unit);
+    }
+    menu_items[unit + 1] = unit_labels[unit];
+  }
+  menu_items[TANDOS_UNIT_COUNT + 1] = "Create blank disk image";
+  menu_items[TANDOS_UNIT_COUNT + 2] = "Eject all disks";
+  menu_items[TANDOS_UNIT_COUNT + 3] = "Back";
+
+  int selection = popup_menu_select(renderer, "TANDOS Disks", menu_items,
+                                    TANDOS_UNIT_COUNT + 4, 0);
+  if (selection == 0) {
+    tandos_set_enabled(!tandos_get_enabled());
+    popup_show(renderer, tandos_get_enabled()
+      ? "TANDOS card enabled at $A800-$BBFF and $BF90-$BF94."
+      : "TANDOS card disabled; its memory ranges are ordinary RAM.");
+    return;
+  }
+
+  if ((selection >= 1) && (selection <= TANDOS_UNIT_COUNT)) {
+    int unit = selection - 1;
+    const char* unit_items[] = {
+      "Mount disk image read/write",
+      "Mount disk image read-only",
+      "Eject disk",
+      "Disk information",
+      "Cancel"};
+    int unit_selection = popup_menu_select(renderer, unit_labels[unit], unit_items, 5, 0);
+    if ((unit_selection == 0) || (unit_selection == 1)) {
+      const char* extensions[] = {".img", ".tdsk", ".dsk", ".raw"};
+      char file_name[PATH_MAX];
+      if (popup_file_select(renderer, "Mount TANDOS Disk", file_dialog_directory,
+                            extensions, 4, false, "", file_name, sizeof(file_name))) {
+        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
+        int rv = tandos_mount(unit, file_name, unit_selection == 1);
+        if (rv == RV_OK) {
+          tandos_set_enabled(true);
+          popup_show(renderer, unit_selection == 1
+            ? "Disk mounted read-only; TANDOS card enabled."
+            : "Disk mounted read/write; TANDOS card enabled.");
+        } else {
+          popup_show(renderer,
+                     "Mount failed. Use a single-sided 35-80 track, "
+                     "9 or 10 sector, 256-byte raw image.");
+        }
+      }
+    } else if (unit_selection == 2) {
+      tandos_eject(unit);
+      popup_show(renderer, "Disk ejected.");
+    } else if (unit_selection == 3) {
+      char information[PATH_MAX + 160];
+      if (tandos_unit_mounted(unit)) {
+        snprintf(information, sizeof(information),
+                 "Unit %d:\n%s\n%d tracks, %d sectors/track\n%s",
+                 unit, tandos_unit_file_name(unit), tandos_unit_tracks(unit),
+                 tandos_unit_sectors_per_track(unit),
+                 tandos_unit_write_protected(unit) ? "Read-only" : "Read/write");
+      } else {
+        snprintf(information, sizeof(information), "Unit %d: empty", unit);
+      }
+      popup_show(renderer, information);
+    }
+    return;
+  }
+
+  if (selection == TANDOS_UNIT_COUNT + 1) {
+    const char* extensions[] = {".img", ".tdsk"};
+    char file_name[PATH_MAX];
+    char geometry[64];
+    if (!popup_file_select(renderer, "Create TANDOS Disk", file_dialog_directory,
+                           extensions, 2, true, "new_disk.img", file_name, sizeof(file_name))) {
+      return;
+    }
+    update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
+    if (!popup_prompt_input(renderer, "Create TANDOS Disk",
+                            "Tracks,sectors per track (35-80, 9 or 10)",
+                            "80,10", geometry, sizeof(geometry))) {
+      return;
+    }
+
+    int tracks;
+    int sectors;
+    if ((sscanf(geometry, "%d,%d", &tracks, &sectors) != 2) ||
+        (tandos_create_image(file_name, tracks, sectors) != RV_OK)) {
+      popup_show(renderer, "Unable to create disk. Example geometry: 80,10");
+    } else {
+      popup_show(renderer, "Blank formatted disk image created.");
+    }
+  } else if (selection == TANDOS_UNIT_COUNT + 2) {
+    tandos_eject_all();
+    popup_show(renderer, "All TANDOS disks ejected.");
+  }
+}
 static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, int* cpu_clock_frequency, char* file_dialog_directory, size_t file_dialog_directory_size) {
   const char* menu_items[] = {
     "Reset system",
@@ -359,12 +476,13 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
     "Load program file (.m65/.hex/.ihx/.ihex)",
     "Save snapshot (.m65)",
     "Save Intel HEX address range",
+    "Disks",
     "Display options",
     "CPU clock options",
     "Help",
     "Cancel"};
 
-  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 10, 0);
+  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 11, 0);
   char file_name[PATH_MAX];
   char range_input[128];
   int rv;
@@ -447,7 +565,11 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
       }
       break;
     }
-    case 6: {
+    case 6:
+      show_disks_menu(renderer, file_dialog_directory, file_dialog_directory_size);
+      break;
+
+    case 7: {
       const char* display_items[] = {
         "Text/chunky only",
         "Tangerine hi-res (RGBI)",
@@ -485,7 +607,7 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
       break;
     }
 
-    case 7: {
+    case 8: {
       const char* clock_items[] = {
         "750 kHz (original)",
         "1.5 MHz",
@@ -504,10 +626,11 @@ static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, in
       break;
     }
 
-    case 8:
+    case 9:
       popup_show(renderer,
                  "F1: Open menu\n"
                  "Menu has reset/input/load/save actions\n"
+                 "Menu -> Disks: TANDOS card and units 0-7\n"
                  "Menu -> Display options: Text/Tangerine/GPU/Colour VDU\n"
                  "With Colour VDU enabled, TANBUG Ctrl-X follows its output\n"
                  "Menu -> CPU clock options: 750k/1.5M/3M/6M\n"
@@ -558,6 +681,16 @@ int main(int argc, char* argv[]) {
   integer_scaled_display_size(height, &width, &height);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+  if (!renderer) {
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+  }
+  if (!renderer) {
+    fprintf(stderr, "Unable to create SDL renderer: %s\n", SDL_GetError());
+    SDL_DestroyWindow(window);
+    system_close();
+    SDL_Quit();
+    return 1;
+  }
   int render_width;
   int render_height;
   display_get_render_size(&render_width, &render_height);
@@ -569,7 +702,7 @@ int main(int argc, char* argv[]) {
   struct timespec start_time;
   struct timespec end_time;
   struct timespec sleep_time;
-  bool display_overwritten = false;
+  bool display_overwritten = true;
 
   while (is_running) {
     clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -701,8 +834,8 @@ int main(int argc, char* argv[]) {
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
-  SDL_Quit();
   system_close();
+  SDL_Quit();
 
   return 0;
 }

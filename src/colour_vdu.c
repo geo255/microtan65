@@ -12,6 +12,8 @@
 #define COLOUR_VDU_CRTC_BASE     0xA7F0
 #define COLOUR_VDU_LINE_WIDTH    0xA640
 #define COLOUR_VDU_COLUMNS       64
+#define STANDARD_DISPLAY_COLUMNS 32
+#define STANDARD_CURSOR_ADDRESS  0x03E0
 #define COLOUR_VDU_ROWS          25
 #define COLOUR_VDU_CELL_WIDTH    6
 #define COLOUR_VDU_CELL_HEIGHT   10
@@ -31,6 +33,8 @@ static bool colour_vdu_enabled;
 static bool colour_vdu_updated = true;
 static bool output_changed;
 static bool output_selected;
+static bool tanbug_initialisation_pending;
+static bool tanbug_force_standard_output;
 static unsigned int last_flash_phase;
 static unsigned int last_cursor_phase;
 
@@ -72,6 +76,11 @@ static uint8_t colour_vdu_crtc_mask(uint8_t reg, uint8_t value) {
 
 static uint8_t colour_vdu_read(uint16_t address) {
   if (!colour_vdu_enabled) {
+    if (tanbug_force_standard_output &&
+        (address == COLOUR_VDU_LINE_WIDTH)) {
+      *system_get_memory_pointer(address) = STANDARD_DISPLAY_COLUMNS;
+      tanbug_force_standard_output = false;
+    }
     return *system_get_memory_pointer(address);
   }
 
@@ -91,12 +100,28 @@ static uint8_t colour_vdu_read(uint16_t address) {
 
 static void colour_vdu_write(uint16_t address, uint8_t value) {
   if (!colour_vdu_enabled) {
+    if (tanbug_initialisation_pending &&
+        (address == COLOUR_VDU_LINE_WIDTH) &&
+        (value == COLOUR_VDU_COLUMNS)) {
+      // TANBUG V3B defaults to its 64-column output. Select the standard
+      // 32-column display when the Colour VDU card is absent.
+      tanbug_force_standard_output = true;
+      *system_get_memory_pointer(0x000A) =
+        (uint8_t)(STANDARD_CURSOR_ADDRESS & 0xFF);
+      *system_get_memory_pointer(0x000B) =
+        (uint8_t)(STANDARD_CURSOR_ADDRESS >> 8);
+      tanbug_initialisation_pending = false;
+    }
     return;
   }
 
   if (address < COLOUR_VDU_CRTC_BASE) {
+    if (address == COLOUR_VDU_LINE_WIDTH) {
+      tanbug_initialisation_pending = false;
+    }
     if ((address == COLOUR_VDU_LINE_WIDTH) &&
-        ((value == 0x20) || (value == COLOUR_VDU_COLUMNS))) {
+        ((value == STANDARD_DISPLAY_COLUMNS) ||
+         (value == COLOUR_VDU_COLUMNS))) {
       // TANBUG uses its current line width as the selected-output state.
       output_selected = value == COLOUR_VDU_COLUMNS;
       output_changed = true;
@@ -458,6 +483,7 @@ void colour_vdu_reset(uint8_t bank, uint16_t address) {
   crtc_selected_register = 0;
   output_changed = false;
   output_selected = false;
+  tanbug_initialisation_pending = true;
   colour_vdu_updated = true;
 }
 

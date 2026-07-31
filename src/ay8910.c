@@ -456,9 +456,13 @@ void ay8910_close(void) {
     return;
 
   if (audio_device != 0) {
+    SDL_LockAudioDevice(audio_device);
+    ay8910_initialised = false;
+    SDL_UnlockAudioDevice(audio_device);
+    SDL_PauseAudioDevice(audio_device, 1);
     SDL_CloseAudioDevice(audio_device);
     audio_device = 0;
+  } else {
+    ay8910_initialised = false;
   }
-
-  ay8910_initialised = false;
 }

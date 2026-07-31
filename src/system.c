@@ -12,6 +12,7 @@
 #include "keyboard.h"
 #include "serial.h"
 #include "system.h"
+#include "tandos.h"
 #include "via_6522.h"
 
 #define MAX_DEVICES 32
@@ -88,7 +89,7 @@ static bool file_name_has_extension(const char* file_name, const char* extension
 // List of system devices
 device_configuration_t system_devices[] =
   {
-    {keyboard_initialise, NULL, NULL, 0x00, 0xbff0, 0x0000, "keyboard"},
+    {keyboard_initialise, keyboard_reset, NULL, 0x00, 0xbff0, 0x0000, "keyboard"},
     {display_initialise, display_reset, NULL, 0x00, 0x0200, 0xbff0, "main display"},
     {display_initialise, NULL, NULL, 0x01, 0x8000, 0x0000, "hires red"},
     {display_initialise, NULL, NULL, 0x02, 0x8000, 0x0000, "hires green"},
@@ -96,6 +97,7 @@ device_configuration_t system_devices[] =
     {display_initialise, NULL, NULL, 0x04, 0x8000, 0x0000, "hires intensity"},
     {display_initialise, NULL, display_close, 0x00, 0xbf00, 0x0000, "gpu"},
     {colour_vdu_initialise, colour_vdu_reset, NULL, 0x00, 0xa000, 0x0000, "colour vdu"},
+    {tandos_initialise, tandos_reset, tandos_close, 0x00, 0x0000, 0x0000, "tandos"},
     {via_6522_initialise, via_6522_reset, NULL, 0x00, 0xbfc0, 0x0000, NULL},
     {via_6522_initialise, via_6522_reset, NULL, 0x00, 0xbfe0, 0x0000, NULL},
     {serial_initialise, serial_reset, NULL, 0x00, 0xbfd0, 0xbfd3, NULL},
@@ -529,7 +531,6 @@ void system_close() {
     device++;
   }
 }
-
 
 
 

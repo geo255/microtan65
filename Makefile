@@ -48,6 +48,7 @@ smoke:
 >missing=0; \
 >for f in \
 >  assets/microtan.rom \
+>  assets/tandos.rom \
 >  assets/charset.rom \
 >  assets/saa5050.chr \
 >  assets/fonts/arial.ttx \
@@ -69,6 +70,16 @@ smoke:
 >fi; \
 >echo "Smoke check passed."
 
+test-tandos: | $(BUILD_DIR)
+>$(CC) $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) \
+>  tests/tandos_test.c src/tandos.c -o $(BUILD_DIR)/tandos_test
+>./$(BUILD_DIR)/tandos_test
+
+test-keyboard: | $(BUILD_DIR)
+>$(CC) $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) \
+>  tests/keyboard_test.c src/keyboard.c -o $(BUILD_DIR)/keyboard_test
+>./$(BUILD_DIR)/keyboard_test
+
 format:
 >clang-format -i $(SOURCES) $(HEADERS)
 
@@ -78,7 +89,7 @@ lint:
 clean:
 >$(RM) $(OBJECTS) $(TARGET) $(TARGET).exe
 
-.PHONY: all release debug sanitize run smoke format lint clean
+.PHONY: all release debug sanitize run smoke test-tandos test-keyboard format lint clean
 
 
 
