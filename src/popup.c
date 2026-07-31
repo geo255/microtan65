@@ -15,6 +15,8 @@
 
 #define POPUP_MAX_LINES 64
 #define POPUP_MAX_ITEMS 32
+#define POPUP_BUTTON_GAP 10
+#define POPUP_BUTTON_MIN_WIDTH 96
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -252,6 +254,149 @@ static void popup_draw_frame(SDL_Renderer* renderer, const SDL_Rect* popup_rect)
   }
 }
 
+static bool popup_point_in_rect(int x, int y, const SDL_Rect* rect) {
+  return x >= rect->x && x < rect->x + rect->w &&
+         y >= rect->y && y < rect->y + rect->h;
+}
+
+static int popup_button_width(TTF_Font* font, const char* label) {
+  int text_width = 0;
+  TTF_SizeUTF8(font, label, &text_width, NULL);
+  int width = text_width + 32;
+  return width < POPUP_BUTTON_MIN_WIDTH ? POPUP_BUTTON_MIN_WIDTH : width;
+}
+
+static void popup_button_rects(TTF_Font* font, const SDL_Rect* popup_rect,
+                               int padding, const char* primary_label,
+                               SDL_Rect* primary_rect,
+                               SDL_Rect* cancel_rect) {
+  int height = TTF_FontLineSkip(font) + 14;
+  if (height < 34) {
+    height = 34;
+  }
+  cancel_rect->w = popup_button_width(font, "Cancel");
+  cancel_rect->h = height;
+  cancel_rect->x = popup_rect->x + popup_rect->w - padding - cancel_rect->w;
+  cancel_rect->y = popup_rect->y + popup_rect->h - padding - height;
+  primary_rect->w = popup_button_width(font, primary_label);
+  primary_rect->h = height;
+  primary_rect->x = cancel_rect->x - POPUP_BUTTON_GAP - primary_rect->w;
+  primary_rect->y = cancel_rect->y;
+}
+
+static void popup_draw_button(SDL_Renderer* renderer, TTF_Font* font,
+                              const SDL_Rect* rect, const char* label,
+                              bool highlighted) {
+  SDL_Color text_color = {0, 0, 0, 255};
+  if (highlighted) {
+    SDL_SetRenderDrawColor(renderer, 255, 235, 170, 255);
+  } else {
+    SDL_SetRenderDrawColor(renderer, 232, 187, 105, 255);
+  }
+  SDL_RenderFillRect(renderer, rect);
+  SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+  SDL_RenderDrawRect(renderer, rect);
+
+  SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label, text_color);
+  SDL_Texture* texture = surface
+    ? SDL_CreateTextureFromSurface(renderer, surface)
+    : NULL;
+  if (texture) {
+    SDL_Rect text_rect = {
+      rect->x + (rect->w - surface->w) / 2,
+      rect->y + (rect->h - surface->h) / 2,
+      surface->w, surface->h};
+    SDL_RenderCopy(renderer, texture, NULL, &text_rect);
+    SDL_DestroyTexture(texture);
+  }
+  if (surface) {
+    SDL_FreeSurface(surface);
+  }
+}
+
+static int popup_text_width(TTF_Font* font, const char* text) {
+  int width = 0;
+  TTF_SizeUTF8(font, text, &width, NULL);
+  return width;
+}
+
+static size_t popup_utf8_character_size(const char* text) {
+  unsigned char first = (unsigned char)text[0];
+  if ((first & 0x80U) == 0U) {
+    return 1;
+  }
+  if ((first & 0xe0U) == 0xc0U) {
+    return 2;
+  }
+  if ((first & 0xf0U) == 0xe0U) {
+    return 3;
+  }
+  if ((first & 0xf8U) == 0xf0U) {
+    return 4;
+  }
+  return 1;
+}
+
+static void popup_fit_path(TTF_Font* font, const char* path, int max_width,
+                           char* output, size_t output_size) {
+  if (output_size < 4) {
+    if (output_size > 0) {
+      output[0] = '\0';
+    }
+    return;
+  }
+  snprintf(output, output_size, "%s", path);
+  if (popup_text_width(font, output) <= max_width) {
+    return;
+  }
+
+  const char* final_component = strrchr(path, '/');
+  if (!final_component) {
+    final_component = path;
+  }
+
+  size_t used = 0;
+  const char* component = path;
+  if (*component == '/' && used + 1 < output_size) {
+    output[used++] = '/';
+    component++;
+  }
+  while (*component && component < final_component) {
+    const char* separator = strchr(component, '/');
+    if (!separator || separator > final_component) {
+      break;
+    }
+    size_t character_size = popup_utf8_character_size(component);
+    if (used + character_size + 1 >= output_size) {
+      break;
+    }
+    memcpy(output + used, component, character_size);
+    used += character_size;
+    output[used++] = '/';
+    component = separator + 1;
+  }
+  snprintf(output + used, output_size - used, "%s",
+           *final_component == '/' ? final_component + 1 : final_component);
+  if (popup_text_width(font, output) <= max_width) {
+    return;
+  }
+
+  const char* suffix = final_component;
+  do {
+    while (strlen(suffix) + 4 > output_size && *suffix) {
+      suffix += popup_utf8_character_size(suffix);
+    }
+    size_t suffix_length = strlen(suffix);
+    memcpy(output, "...", 3);
+    memcpy(output + 3, suffix, suffix_length + 1);
+    if (popup_text_width(font, output) <= max_width || *suffix == '\0') {
+      return;
+    }
+    suffix += popup_utf8_character_size(suffix);
+  } while (*suffix);
+  snprintf(output, output_size, "...");
+}
+
 void popup_show(SDL_Renderer* renderer, const char* message) {
   SDL_Color text_color = {0, 0, 0, 255};
   SDL_Rect popup_rect = popup_center_rect(renderer, 420, 300, 12);
@@ -312,7 +457,13 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
   if (desired_height < 180) {
     desired_height = 180;
   }
+  desired_height += 42;
   popup_rect = popup_center_rect(renderer, desired_width, desired_height, 12);
+  int button_width = popup_button_width(font, "OK");
+  int button_height = TTF_FontLineSkip(font) + 14;
+  SDL_Rect ok_rect = {popup_rect.x + (popup_rect.w - button_width) / 2,
+                      popup_rect.y + popup_rect.h - button_height - 28,
+                      button_width, button_height};
 
   bool popup_done = false;
 
@@ -320,7 +471,14 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
-      if (event.type == SDL_QUIT || event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN) {
+      if (event.type == SDL_QUIT) {
+        popup_done = true;
+      } else if (event.type == SDL_KEYDOWN) {
+        popup_done = true;
+      } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                 event.button.button == SDL_BUTTON_LEFT &&
+                 popup_point_in_rect(event.button.x, event.button.y,
+                                     &ok_rect)) {
         popup_done = true;
       }
     }
@@ -336,6 +494,12 @@ void popup_show(SDL_Renderer* renderer, const char* message) {
       SDL_RenderCopy(renderer, text_textures[i], NULL, &text_rect);
       y += text_h[i] + 5;
     }
+
+    int mouse_x;
+    int mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    popup_draw_button(renderer, font, &ok_rect, "OK",
+                      popup_point_in_rect(mouse_x, mouse_y, &ok_rect));
 
     SDL_RenderPresent(renderer);
     SDL_Delay(16);
@@ -379,12 +543,16 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
   if (popup_rect.w < 420) {
     padding = 14;
   }
+  SDL_Rect ok_rect;
+  SDL_Rect cancel_rect;
+  popup_button_rects(font, &popup_rect, padding, "OK", &ok_rect,
+                     &cancel_rect);
 
   int input_h = (line_height < 22) ? 34 : 42;
   input_rect.x = popup_rect.x + padding;
   input_rect.w = popup_rect.w - (2 * padding);
   input_rect.h = input_h;
-  input_rect.y = popup_rect.y + popup_rect.h - input_h - line_height - padding;
+  input_rect.y = ok_rect.y - input_h - 16;
   if (input_rect.y < popup_rect.y + (2 * padding) + line_height * 2) {
     input_rect.y = popup_rect.y + (2 * padding) + line_height * 2;
   }
@@ -425,6 +593,16 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
         if (current + incoming < output_size) {
           strcat(output, text);
         }
+      } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                 event.button.button == SDL_BUTTON_LEFT) {
+        if (popup_point_in_rect(event.button.x, event.button.y, &ok_rect)) {
+          done = true;
+          accepted = output[0] != '\0';
+        } else if (popup_point_in_rect(event.button.x, event.button.y,
+                                      &cancel_rect)) {
+          done = true;
+          accepted = false;
+        }
       }
     }
 
@@ -433,12 +611,10 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
     SDL_Surface* title_surface = TTF_RenderText_Blended(font, title, text_color);
     SDL_Surface* prompt_surface = TTF_RenderText_Blended(font, prompt, text_color);
     SDL_Surface* value_surface = TTF_RenderText_Blended(font, output, text_color);
-    SDL_Surface* hint_surface = TTF_RenderText_Blended(font, "Enter=OK  Esc=Cancel", text_color);
 
     SDL_Texture* title_texture = title_surface ? SDL_CreateTextureFromSurface(renderer, title_surface) : NULL;
     SDL_Texture* prompt_texture = prompt_surface ? SDL_CreateTextureFromSurface(renderer, prompt_surface) : NULL;
     SDL_Texture* value_texture = value_surface ? SDL_CreateTextureFromSurface(renderer, value_surface) : NULL;
-    SDL_Texture* hint_texture = hint_surface ? SDL_CreateTextureFromSurface(renderer, hint_surface) : NULL;
 
     if (title_texture) {
       SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding, title_surface->w, title_surface->h};
@@ -466,10 +642,13 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
       }
     }
 
-    if (hint_texture) {
-      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + popup_rect.h - line_height - padding, hint_surface->w, hint_surface->h};
-      SDL_RenderCopy(renderer, hint_texture, NULL, &rect);
-    }
+    int mouse_x;
+    int mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    popup_draw_button(renderer, font, &ok_rect, "OK",
+                      popup_point_in_rect(mouse_x, mouse_y, &ok_rect));
+    popup_draw_button(renderer, font, &cancel_rect, "Cancel",
+                      popup_point_in_rect(mouse_x, mouse_y, &cancel_rect));
 
     SDL_RenderPresent(renderer);
     SDL_Delay(16);
@@ -480,8 +659,6 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
       SDL_DestroyTexture(prompt_texture);
     if (value_texture)
       SDL_DestroyTexture(value_texture);
-    if (hint_texture)
-      SDL_DestroyTexture(hint_texture);
 
     if (title_surface)
       SDL_FreeSurface(title_surface);
@@ -489,8 +666,6 @@ bool popup_prompt_input(SDL_Renderer* renderer, const char* title, const char* p
       SDL_FreeSurface(prompt_surface);
     if (value_surface)
       SDL_FreeSurface(value_surface);
-    if (hint_surface)
-      SDL_FreeSurface(hint_surface);
   }
 
   SDL_StopTextInput();
@@ -600,7 +775,8 @@ static bool popup_list_directory(const char* directory,
 
   struct dirent* item;
   while ((item = readdir(dir)) != NULL) {
-    if (strcmp(item->d_name, ".") == 0) {
+    if ((strcmp(item->d_name, ".") == 0) ||
+        (strcmp(item->d_name, "..") == 0)) {
       continue;
     }
 
@@ -694,26 +870,28 @@ bool popup_file_select(SDL_Renderer* renderer,
     row_height = 24;
   }
 
-  int header_height = padding + line_height + 6 + line_height + 6 + line_height + 10;
-  int footer_height = allow_text_entry ? (line_height * 2 + 68) : (line_height + 24);
-  list_rect.x = popup_rect.x + padding;
+  const char* primary_label = allow_text_entry ? "Save" : "Open";
+  SDL_Rect primary_rect;
+  SDL_Rect cancel_rect;
+  int button_padding = padding + 10;
+  popup_button_rects(font, &popup_rect, button_padding, primary_label,
+                     &primary_rect, &cancel_rect);
+
+  int header_height = padding + line_height * 2 + 16;
+  int content_padding = padding + 10;
+  list_rect.x = popup_rect.x + content_padding;
   list_rect.y = popup_rect.y + header_height;
-  list_rect.w = popup_rect.w - (2 * padding);
-  list_rect.h = popup_rect.h - header_height - footer_height;
-  if (list_rect.h < (row_height * 3)) {
-    list_rect.h = row_height * 3;
-  }
-  if (list_rect.y + list_rect.h > popup_rect.y + popup_rect.h - (allow_text_entry ? (line_height + 50) : (line_height + 10))) {
-    list_rect.h = popup_rect.y + popup_rect.h - (allow_text_entry ? (line_height + 50) : (line_height + 10)) - list_rect.y;
-  }
+  list_rect.w = popup_rect.w - (2 * content_padding);
+
+  input_rect.x = popup_rect.x + content_padding;
+  input_rect.w = popup_rect.w - (2 * content_padding);
+  input_rect.h = (line_height < 22) ? 34 : 42;
+  input_rect.y = primary_rect.y - input_rect.h - line_height - 14;
+  list_rect.h = (allow_text_entry ? input_rect.y - line_height - 12
+                                  : primary_rect.y - 12) - list_rect.y;
   if (list_rect.h < row_height) {
     list_rect.h = row_height;
   }
-
-  input_rect.x = popup_rect.x + padding;
-  input_rect.w = popup_rect.w - (2 * padding);
-  input_rect.h = (line_height < 22) ? 34 : 42;
-  input_rect.y = popup_rect.y + popup_rect.h - input_rect.h - padding - line_height - 6;
 
   char current_directory[PATH_MAX];
   popup_resolve_start_directory(start_directory, current_directory, sizeof(current_directory));
@@ -727,6 +905,7 @@ bool popup_file_select(SDL_Renderer* renderer,
   popup_file_entry_t* entries = NULL;
   int entry_count = 0;
   int selected_index = 0;
+  int hovered_index = -1;
   int scroll_offset = 0;
   bool refresh_entries = true;
   bool done = false;
@@ -754,16 +933,20 @@ bool popup_file_select(SDL_Renderer* renderer,
       if (selected_index < 0) {
         selected_index = 0;
       }
+      hovered_index = -1;
 
       refresh_entries = false;
     }
 
+    bool activate_selection = false;
+    bool activate_selected_entry = false;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) {
         done = true;
         accepted = false;
       } else if (event.type == SDL_MOUSEWHEEL) {
+        hovered_index = -1;
         if (event.wheel.y > 0 && selected_index > 0) {
           selected_index--;
         } else if (event.wheel.y < 0 && selected_index + 1 < entry_count) {
@@ -775,6 +958,41 @@ bool popup_file_select(SDL_Renderer* renderer,
 
         if (current_length + incoming_length < sizeof(typed_name)) {
           strcat(typed_name, event.text.text);
+        }
+      } else if (event.type == SDL_MOUSEMOTION) {
+        hovered_index = -1;
+        if (popup_point_in_rect(event.motion.x, event.motion.y,
+                                &list_rect)) {
+          int row = (event.motion.y - list_rect.y - 4) / row_height;
+          int candidate = scroll_offset + row;
+          if (candidate >= 0 && candidate < entry_count) {
+            hovered_index = candidate;
+          }
+        }
+      } else if (event.type == SDL_MOUSEBUTTONDOWN &&
+                 event.button.button == SDL_BUTTON_LEFT) {
+        if (popup_point_in_rect(event.button.x, event.button.y,
+                                &cancel_rect)) {
+          done = true;
+          accepted = false;
+        } else if (popup_point_in_rect(event.button.x, event.button.y,
+                                       &primary_rect)) {
+          activate_selection = true;
+        } else if (popup_point_in_rect(event.button.x, event.button.y,
+                                       &list_rect)) {
+          int row = (event.button.y - list_rect.y - 4) / row_height;
+          int clicked_index = scroll_offset + row;
+          if (clicked_index >= 0 && clicked_index < entry_count) {
+            selected_index = clicked_index;
+            if (allow_text_entry && !entries[selected_index].is_dir) {
+              snprintf(typed_name, sizeof(typed_name), "%s",
+                       entries[selected_index].name);
+            }
+            if (event.button.clicks >= 2) {
+              activate_selection = true;
+              activate_selected_entry = true;
+            }
+          }
         }
       } else if (event.type == SDL_KEYDOWN) {
         SDL_KeyCode key = event.key.keysym.sym;
@@ -825,30 +1043,53 @@ bool popup_file_select(SDL_Renderer* renderer,
             typed_name[length - 1] = '\0';
           }
         } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
-          if (allow_text_entry && typed_name[0] != '\0') {
-            if (popup_join_path(output, output_size, current_directory, typed_name)) {
-              accepted = true;
-              done = true;
-            }
-          } else if (entry_count > 0) {
-            popup_file_entry_t* selected = &entries[selected_index];
+          activate_selection = true;
+        }
+      }
+    }
 
-            if (selected->is_dir) {
-              char next_directory[PATH_MAX];
-              if (popup_join_path(next_directory, sizeof(next_directory), current_directory, selected->name)) {
-                char resolved[PATH_MAX];
-                if (realpath(next_directory, resolved) && popup_is_directory_path(resolved)) {
-                  snprintf(current_directory, sizeof(current_directory), "%s", resolved);
-                  selected_index = 0;
-                  scroll_offset = 0;
-                  refresh_entries = true;
-                }
-              }
-            } else if (popup_join_path(output, output_size, current_directory, selected->name)) {
-              accepted = true;
-              done = true;
+    if (!done && activate_selection) {
+      popup_file_entry_t* selected = entry_count > 0
+        ? &entries[selected_index] : NULL;
+      if (activate_selected_entry && selected && selected->is_dir) {
+        char next_directory[PATH_MAX];
+        if (popup_join_path(next_directory, sizeof(next_directory),
+                            current_directory, selected->name)) {
+          char resolved[PATH_MAX];
+          if (realpath(next_directory, resolved) &&
+              popup_is_directory_path(resolved)) {
+            snprintf(current_directory, sizeof(current_directory), "%s",
+                     resolved);
+            selected_index = 0;
+            scroll_offset = 0;
+            refresh_entries = true;
+          }
+        }
+      } else if (allow_text_entry && typed_name[0] != '\0') {
+        if (popup_join_path(output, output_size, current_directory,
+                            typed_name)) {
+          accepted = true;
+          done = true;
+        }
+      } else if (selected) {
+        if (selected->is_dir) {
+          char next_directory[PATH_MAX];
+          if (popup_join_path(next_directory, sizeof(next_directory),
+                              current_directory, selected->name)) {
+            char resolved[PATH_MAX];
+            if (realpath(next_directory, resolved) &&
+                popup_is_directory_path(resolved)) {
+              snprintf(current_directory, sizeof(current_directory), "%s",
+                       resolved);
+              selected_index = 0;
+              scroll_offset = 0;
+              refresh_entries = true;
             }
           }
+        } else if (popup_join_path(output, output_size, current_directory,
+                                   selected->name)) {
+          accepted = true;
+          done = true;
         }
       }
     }
@@ -867,31 +1108,31 @@ bool popup_file_select(SDL_Renderer* renderer,
 
     popup_draw_frame(renderer, &popup_rect);
 
+    int header_inset = 8;
+    int header_x = popup_rect.x + padding + header_inset;
+    int header_y = popup_rect.y + padding + 4;
+    int header_width = popup_rect.x + popup_rect.w - padding - header_inset -
+                       header_x;
+    char displayed_path[PATH_MAX];
+    popup_fit_path(font, current_directory, header_width, displayed_path,
+                   sizeof(displayed_path));
     SDL_Surface* title_surface = TTF_RenderText_Blended(font, title, text_color);
-    SDL_Surface* path_surface = TTF_RenderText_Blended(font, current_directory, text_color);
-    SDL_Surface* hint_surface = TTF_RenderText_Blended(font,
-      allow_text_entry
-        ? "Arrows: move  Enter: open/select  Left: parent dir  Type name for new file"
-        : "Arrows: move  Enter: open/select  Left: parent dir",
-      text_color);
+    SDL_Surface* path_surface = TTF_RenderText_Blended(font, displayed_path,
+                                                        text_color);
 
     SDL_Texture* title_texture = title_surface ? SDL_CreateTextureFromSurface(renderer, title_surface) : NULL;
     SDL_Texture* path_texture = path_surface ? SDL_CreateTextureFromSurface(renderer, path_surface) : NULL;
-    SDL_Texture* hint_texture = hint_surface ? SDL_CreateTextureFromSurface(renderer, hint_surface) : NULL;
 
     if (title_texture) {
-      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding - 2, title_surface->w, title_surface->h};
+      SDL_Rect rect = {header_x, header_y,
+                       title_surface->w, title_surface->h};
       SDL_RenderCopy(renderer, title_texture, NULL, &rect);
     }
 
     if (path_texture) {
-      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding + line_height + 2, path_surface->w, path_surface->h};
+      SDL_Rect rect = {header_x, header_y + line_height + 4,
+                       path_surface->w, path_surface->h};
       SDL_RenderCopy(renderer, path_texture, NULL, &rect);
-    }
-
-    if (hint_texture) {
-      SDL_Rect rect = {popup_rect.x + padding, popup_rect.y + padding + line_height * 2 + 6, hint_surface->w, hint_surface->h};
-      SDL_RenderCopy(renderer, hint_texture, NULL, &rect);
     }
 
     SDL_SetRenderDrawColor(renderer, 255, 235, 170, 255);
@@ -907,7 +1148,8 @@ bool popup_file_select(SDL_Renderer* renderer,
 
     for (int i = scroll_offset; i < max_row; i++) {
       SDL_Rect row_rect = {list_rect.x + 6, y - 2, list_rect.w - 12, row_height - 4};
-      if (i == selected_index) {
+      bool hovered = i == hovered_index;
+      if (hovered || i == selected_index) {
         SDL_SetRenderDrawColor(renderer, 255, 210, 120, 255);
         SDL_RenderFillRect(renderer, &row_rect);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -916,7 +1158,8 @@ bool popup_file_select(SDL_Renderer* renderer,
 
       char line[PATH_MAX + 8];
       snprintf(line, sizeof(line), "%s%s", entries[i].is_dir ? "[D] " : "    ", entries[i].name);
-      SDL_Surface* row_surface = TTF_RenderText_Blended(font, line, text_color);
+      SDL_Surface* row_surface = TTF_RenderText_Blended(font, line,
+                                                        text_color);
       SDL_Texture* row_texture = row_surface ? SDL_CreateTextureFromSurface(renderer, row_surface) : NULL;
 
       if (row_texture) {
@@ -969,6 +1212,14 @@ bool popup_file_select(SDL_Renderer* renderer,
         SDL_FreeSurface(value_surface);
     }
 
+    int mouse_x;
+    int mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    popup_draw_button(renderer, font, &primary_rect, primary_label,
+                      popup_point_in_rect(mouse_x, mouse_y, &primary_rect));
+    popup_draw_button(renderer, font, &cancel_rect, "Cancel",
+                      popup_point_in_rect(mouse_x, mouse_y, &cancel_rect));
+
     SDL_RenderPresent(renderer);
     SDL_Delay(16);
 
@@ -976,14 +1227,10 @@ bool popup_file_select(SDL_Renderer* renderer,
       SDL_DestroyTexture(title_texture);
     if (path_texture)
       SDL_DestroyTexture(path_texture);
-    if (hint_texture)
-      SDL_DestroyTexture(hint_texture);
     if (title_surface)
       SDL_FreeSurface(title_surface);
     if (path_surface)
       SDL_FreeSurface(path_surface);
-    if (hint_surface)
-      SDL_FreeSurface(hint_surface);
   }
 
   if (allow_text_entry) {
@@ -1059,11 +1306,15 @@ int popup_menu_select(SDL_Renderer* renderer, const char* title, const char* con
     popup_rect.w = 420;
   }
 
-  popup_rect.h = content_height + 40;
+  popup_rect.h = content_height + 94;
   if (popup_rect.h < 260) {
     popup_rect.h = 260;
   }
   popup_rect = popup_center_rect(renderer, popup_rect.w, popup_rect.h, 12);
+  SDL_Rect select_rect;
+  SDL_Rect cancel_rect;
+  popup_button_rects(font, &popup_rect, 20, "Select", &select_rect,
+                     &cancel_rect);
 
   bool menu_done = false;
   int menu_result = -1;
@@ -1095,6 +1346,41 @@ int popup_menu_select(SDL_Renderer* renderer, const char* title, const char* con
           menu_result = -1;
           menu_done = true;
         }
+      } else if ((event.type == SDL_MOUSEMOTION) ||
+                 (event.type == SDL_MOUSEBUTTONDOWN &&
+                  event.button.button == SDL_BUTTON_LEFT)) {
+        int mouse_x = event.type == SDL_MOUSEMOTION
+          ? event.motion.x : event.button.x;
+        int mouse_y = event.type == SDL_MOUSEMOTION
+          ? event.motion.y : event.button.y;
+        int row_y = popup_rect.y + 20;
+        if (title_texture) {
+          row_y += title_h + 20;
+        }
+        for (int i = 0; i < item_count; i++) {
+          SDL_Rect row_rect = {popup_rect.x + 20, row_y - 4,
+                               popup_rect.w - 40, item_h[i] + 8};
+          if (popup_point_in_rect(mouse_x, mouse_y, &row_rect)) {
+            selected_index = i;
+            if (event.type == SDL_MOUSEBUTTONDOWN &&
+                event.button.clicks >= 2) {
+              menu_result = selected_index;
+              menu_done = true;
+            }
+            break;
+          }
+          row_y += item_h[i] + 12;
+        }
+
+        if (event.type == SDL_MOUSEBUTTONDOWN) {
+          if (popup_point_in_rect(mouse_x, mouse_y, &select_rect)) {
+            menu_result = selected_index;
+            menu_done = true;
+          } else if (popup_point_in_rect(mouse_x, mouse_y, &cancel_rect)) {
+            menu_result = -1;
+            menu_done = true;
+          }
+        }
       }
     }
 
@@ -1125,6 +1411,14 @@ int popup_menu_select(SDL_Renderer* renderer, const char* title, const char* con
 
       y += item_h[i] + 12;
     }
+
+    int mouse_x;
+    int mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    popup_draw_button(renderer, font, &select_rect, "Select",
+                      popup_point_in_rect(mouse_x, mouse_y, &select_rect));
+    popup_draw_button(renderer, font, &cancel_rect, "Cancel",
+                      popup_point_in_rect(mouse_x, mouse_y, &cancel_rect));
 
     SDL_RenderPresent(renderer);
     SDL_Delay(16);

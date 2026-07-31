@@ -19,6 +19,7 @@
 #include "invaders_sound.h"
 #include "joystick.h"
 #include "keyboard.h"
+#include "menu_bar.h"
 #include "popup.h"
 #include "system.h"
 #include "tandos.h"
@@ -41,8 +42,6 @@ static const int MICROTAN_CLOCK_OPTIONS[MICROTAN_CLOCK_OPTION_COUNT] = {
 #endif
 
 static bool is_supported_clock_frequency(int clock_frequency);
-static int clock_frequency_to_menu_index(int clock_frequency);
-static const char* clock_frequency_name(int clock_frequency);
 
 static bool directory_exists(const char* path) {
   struct stat st;
@@ -277,33 +276,20 @@ static bool parse_hex_range(const char* text, uint16_t* start, uint16_t* end) {
   return true;
 }
 
-static const char* display_mode_name(display_hires_mode_t mode) {
-  switch (mode) {
-    case DISPLAY_HIRES_MODE_TANGERINE:
-      return "Tangerine hi-res (RGBI)";
-    case DISPLAY_HIRES_MODE_EXTENDED:
-      return "GPU";
-    case DISPLAY_HIRES_MODE_COLOUR_VDU:
-      return "Mousepacket Colour VDU";
-    case DISPLAY_HIRES_MODE_NONE:
-    default:
-      return "Text/chunky";
-  }
-}
-
 static void integer_scaled_display_size(int requested_height,
                                         int* width, int* height) {
   int native_width;
   int native_height;
   display_get_render_size(&native_width, &native_height);
 
-  int scale = (requested_height + native_height / 2) / native_height;
+  int requested_display_height = requested_height - MENU_BAR_HEIGHT;
+  int scale = (requested_display_height + native_height / 2) / native_height;
   if (scale < 2) {
     scale = 2;
   }
 
   *width = native_width * scale;
-  *height = native_height * scale;
+  *height = native_height * scale + MENU_BAR_HEIGHT;
 }
 
 static void resize_window_to_integer_scale(SDL_Window* window,
@@ -330,30 +316,6 @@ static bool is_supported_clock_frequency(int clock_frequency) {
   return false;
 }
 
-static int clock_frequency_to_menu_index(int clock_frequency) {
-  for (int i = 0; i < MICROTAN_CLOCK_OPTION_COUNT; i++) {
-    if (MICROTAN_CLOCK_OPTIONS[i] == clock_frequency) {
-      return i;
-    }
-  }
-
-  return 0;
-}
-
-static const char* clock_frequency_name(int clock_frequency) {
-  switch (clock_frequency) {
-    case 6000000:
-      return "6 MHz";
-    case 3000000:
-      return "3 MHz";
-    case 1500000:
-      return "1.5 MHz";
-    case 750000:
-    default:
-      return "750 kHz";
-  }
-}
-
 static const char* path_base_name(const char* path) {
   const char* slash = path ? strrchr(path, '/') : NULL;
   const char* backslash = path ? strrchr(path, '\\') : NULL;
@@ -365,287 +327,389 @@ static const char* path_base_name(const char* path) {
   return separator ? separator + 1 : (path ? path : "");
 }
 
-static void show_disks_menu(SDL_Renderer* renderer, char* file_dialog_directory, size_t file_dialog_directory_size) {
-  char unit_labels[TANDOS_UNIT_COUNT][128];
-  const char* menu_items[TANDOS_UNIT_COUNT + 4];
+typedef enum {
+  MENU_COMMAND_LOAD_PROGRAM = 1,
+  MENU_COMMAND_SAVE_SNAPSHOT,
+  MENU_COMMAND_EXPORT_HEX,
+  MENU_COMMAND_QUIT,
+  MENU_COMMAND_RESET = 10,
+  MENU_COMMAND_CLOCK_750KHZ,
+  MENU_COMMAND_CLOCK_1_5MHZ,
+  MENU_COMMAND_CLOCK_3MHZ,
+  MENU_COMMAND_CLOCK_6MHZ,
+  MENU_COMMAND_TANDOS_TOGGLE = 20,
+  MENU_COMMAND_DISK_UNIT_0,
+  MENU_COMMAND_DISK_UNIT_1,
+  MENU_COMMAND_DISK_UNIT_2,
+  MENU_COMMAND_DISK_UNIT_3,
+  MENU_COMMAND_DISK_UNIT_4,
+  MENU_COMMAND_DISK_UNIT_5,
+  MENU_COMMAND_DISK_UNIT_6,
+  MENU_COMMAND_DISK_UNIT_7,
+  MENU_COMMAND_DISK_CREATE,
+  MENU_COMMAND_DISK_EJECT_ALL,
+  MENU_COMMAND_DISPLAY_TEXT = 40,
+  MENU_COMMAND_DISPLAY_TANGERINE,
+  MENU_COMMAND_DISPLAY_GPU,
+  MENU_COMMAND_DISPLAY_COLOUR_VDU,
+  MENU_COMMAND_COLOUR_VDU_TOGGLE,
+  MENU_COMMAND_INPUT_ASCII = 50,
+  MENU_COMMAND_INPUT_HEX,
+  MENU_COMMAND_HELP = 60
+} application_menu_command_t;
 
-  menu_items[0] = tandos_get_enabled() ? "Disable TANDOS card" : "Enable TANDOS card";
+typedef struct {
+  menu_bar_menu_t menus[6];
+  menu_bar_item_t file_items[5];
+  menu_bar_item_t system_items[6];
+  menu_bar_item_t disk_items[13];
+  menu_bar_item_t display_items[6];
+  menu_bar_item_t input_items[2];
+  menu_bar_item_t help_items[1];
+  char tandos_toggle_label[32];
+  char disk_labels[TANDOS_UNIT_COUNT][160];
+  char colour_vdu_toggle_label[40];
+} application_menu_model_t;
+
+static menu_bar_item_t menu_item(const char* label, const char* shortcut,
+                                 int command, bool enabled, bool checked) {
+  return (menu_bar_item_t){label, shortcut, command, enabled, checked};
+}
+
+static menu_bar_item_t menu_separator(void) {
+  return menu_item(NULL, NULL, MENU_BAR_SEPARATOR_COMMAND, false, false);
+}
+
+static void build_application_menu(application_menu_model_t* model,
+                                   int cpu_clock_frequency) {
+  model->file_items[0] = menu_item("Load program...", NULL,
+                                   MENU_COMMAND_LOAD_PROGRAM, true, false);
+  model->file_items[1] = menu_item("Save snapshot...", NULL,
+                                   MENU_COMMAND_SAVE_SNAPSHOT, true, false);
+  model->file_items[2] = menu_item("Export Intel HEX...", NULL,
+                                   MENU_COMMAND_EXPORT_HEX, true, false);
+  model->file_items[3] = menu_separator();
+  model->file_items[4] = menu_item("Quit", NULL, MENU_COMMAND_QUIT, true, false);
+
+  model->system_items[0] = menu_item("Reset", "F5", MENU_COMMAND_RESET,
+                                     true, false);
+  model->system_items[1] = menu_separator();
+  model->system_items[2] = menu_item("750 kHz (original)", NULL,
+                                     MENU_COMMAND_CLOCK_750KHZ, true,
+                                     cpu_clock_frequency == 750000);
+  model->system_items[3] = menu_item("1.5 MHz", NULL,
+                                     MENU_COMMAND_CLOCK_1_5MHZ, true,
+                                     cpu_clock_frequency == 1500000);
+  model->system_items[4] = menu_item("3 MHz", NULL,
+                                     MENU_COMMAND_CLOCK_3MHZ, true,
+                                     cpu_clock_frequency == 3000000);
+  model->system_items[5] = menu_item("6 MHz", NULL,
+                                     MENU_COMMAND_CLOCK_6MHZ, true,
+                                     cpu_clock_frequency == 6000000);
+
+  snprintf(model->tandos_toggle_label, sizeof(model->tandos_toggle_label),
+           "%s TANDOS card", tandos_get_enabled() ? "Disable" : "Enable");
+  model->disk_items[0] = menu_item(model->tandos_toggle_label, NULL,
+                                   MENU_COMMAND_TANDOS_TOGGLE, true, false);
+  model->disk_items[1] = menu_separator();
   for (int unit = 0; unit < TANDOS_UNIT_COUNT; unit++) {
     if (tandos_unit_mounted(unit)) {
-      snprintf(unit_labels[unit], sizeof(unit_labels[unit]), "%d: %s%s",
-               unit, path_base_name(tandos_unit_file_name(unit)),
+      snprintf(model->disk_labels[unit], sizeof(model->disk_labels[unit]),
+               "Drive %d: %s%s", unit,
+               path_base_name(tandos_unit_file_name(unit)),
                tandos_unit_write_protected(unit) ? " [read-only]" : "");
     } else {
-      snprintf(unit_labels[unit], sizeof(unit_labels[unit]), "%d: <empty>", unit);
+      snprintf(model->disk_labels[unit], sizeof(model->disk_labels[unit]),
+               "Drive %d: <empty>", unit);
     }
-    menu_items[unit + 1] = unit_labels[unit];
+    model->disk_items[unit + 2] = menu_item(
+      model->disk_labels[unit], NULL, MENU_COMMAND_DISK_UNIT_0 + unit,
+      true, false);
   }
-  menu_items[TANDOS_UNIT_COUNT + 1] = "Create blank disk image";
-  menu_items[TANDOS_UNIT_COUNT + 2] = "Eject all disks";
-  menu_items[TANDOS_UNIT_COUNT + 3] = "Back";
+  model->disk_items[10] = menu_separator();
+  model->disk_items[11] = menu_item("Create blank disk image...", NULL,
+                                    MENU_COMMAND_DISK_CREATE, true, false);
+  model->disk_items[12] = menu_item("Eject all disks", NULL,
+                                    MENU_COMMAND_DISK_EJECT_ALL, true, false);
 
-  int selection = popup_menu_select(renderer, "TANDOS Disks", menu_items,
-                                    TANDOS_UNIT_COUNT + 4, 0);
-  if (selection == 0) {
-    tandos_set_enabled(!tandos_get_enabled());
-    popup_show(renderer, tandos_get_enabled()
-      ? "TANDOS card enabled at $A800-$BBFF and $BF90-$BF94."
-      : "TANDOS card disabled; its memory ranges are ordinary RAM.");
-    return;
+  display_hires_mode_t display_mode = display_get_hires_mode();
+  model->display_items[0] = menu_item("Text/chunky", NULL,
+                                      MENU_COMMAND_DISPLAY_TEXT, true,
+                                      display_mode == DISPLAY_HIRES_MODE_NONE);
+  model->display_items[1] = menu_item("Tangerine hi-res (RGBI)", NULL,
+                                      MENU_COMMAND_DISPLAY_TANGERINE, true,
+                                      display_mode == DISPLAY_HIRES_MODE_TANGERINE);
+  model->display_items[2] = menu_item("GPU", NULL,
+                                      MENU_COMMAND_DISPLAY_GPU, true,
+                                      display_mode == DISPLAY_HIRES_MODE_EXTENDED);
+  model->display_items[3] = menu_item("Mousepacket Colour VDU", NULL,
+                                      MENU_COMMAND_DISPLAY_COLOUR_VDU,
+                                      colour_vdu_get_enabled(),
+                                      display_mode == DISPLAY_HIRES_MODE_COLOUR_VDU);
+  model->display_items[4] = menu_separator();
+  snprintf(model->colour_vdu_toggle_label,
+           sizeof(model->colour_vdu_toggle_label), "%s Colour VDU card",
+           colour_vdu_get_enabled() ? "Disable" : "Enable");
+  model->display_items[5] = menu_item(model->colour_vdu_toggle_label, NULL,
+                                      MENU_COMMAND_COLOUR_VDU_TOGGLE,
+                                      true, false);
+
+  model->input_items[0] = menu_item("ASCII keyboard", "F3",
+                                    MENU_COMMAND_INPUT_ASCII, true,
+                                    !keyboard_using_hex_keypad());
+  model->input_items[1] = menu_item("Hex keypad", "F2",
+                                    MENU_COMMAND_INPUT_HEX, true,
+                                    keyboard_using_hex_keypad());
+  model->help_items[0] = menu_item("Keyboard shortcuts", NULL,
+                                   MENU_COMMAND_HELP, true, false);
+
+  model->menus[0] = (menu_bar_menu_t){"File", model->file_items, 5};
+  model->menus[1] = (menu_bar_menu_t){"System", model->system_items, 6};
+  model->menus[2] = (menu_bar_menu_t){"Disks", model->disk_items, 13};
+  model->menus[3] = (menu_bar_menu_t){"Display", model->display_items, 6};
+  model->menus[4] = (menu_bar_menu_t){"Input", model->input_items, 2};
+  model->menus[5] = (menu_bar_menu_t){"Help", model->help_items, 1};
+}
+
+static void show_disk_unit_menu(SDL_Renderer* renderer, int unit,
+                                char* file_dialog_directory,
+                                size_t file_dialog_directory_size) {
+  char title[160];
+  if (tandos_unit_mounted(unit)) {
+    snprintf(title, sizeof(title), "Drive %d: %s%s", unit,
+             path_base_name(tandos_unit_file_name(unit)),
+             tandos_unit_write_protected(unit) ? " [read-only]" : "");
+  } else {
+    snprintf(title, sizeof(title), "Drive %d: <empty>", unit);
   }
 
-  if ((selection >= 1) && (selection <= TANDOS_UNIT_COUNT)) {
-    int unit = selection - 1;
-    const char* unit_items[] = {
-      "Mount disk image read/write",
-      "Mount disk image read-only",
-      "Eject disk",
-      "Disk information",
-      "Cancel"};
-    int unit_selection = popup_menu_select(renderer, unit_labels[unit], unit_items, 5, 0);
-    if ((unit_selection == 0) || (unit_selection == 1)) {
-      const char* extensions[] = {".img", ".tdsk", ".dsk", ".raw"};
-      char file_name[PATH_MAX];
-      if (popup_file_select(renderer, "Mount TANDOS Disk", file_dialog_directory,
-                            extensions, 4, false, "", file_name, sizeof(file_name))) {
-        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
-        int rv = tandos_mount(unit, file_name, unit_selection == 1);
-        if (rv == RV_OK) {
-          tandos_set_enabled(true);
-          popup_show(renderer, unit_selection == 1
-            ? "Disk mounted read-only; TANDOS card enabled."
-            : "Disk mounted read/write; TANDOS card enabled.");
-        } else {
-          popup_show(renderer,
-                     "Mount failed. Use a single-sided 35-80 track, "
-                     "9 or 10 sector, 256-byte raw image.");
-        }
-      }
-    } else if (unit_selection == 2) {
-      tandos_eject(unit);
-      popup_show(renderer, "Disk ejected.");
-    } else if (unit_selection == 3) {
-      char information[PATH_MAX + 160];
-      if (tandos_unit_mounted(unit)) {
-        snprintf(information, sizeof(information),
-                 "Unit %d:\n%s\n%d tracks, %d sectors/track\n%s",
-                 unit, tandos_unit_file_name(unit), tandos_unit_tracks(unit),
-                 tandos_unit_sectors_per_track(unit),
-                 tandos_unit_write_protected(unit) ? "Read-only" : "Read/write");
-      } else {
-        snprintf(information, sizeof(information), "Unit %d: empty", unit);
-      }
-      popup_show(renderer, information);
-    }
-    return;
-  }
-
-  if (selection == TANDOS_UNIT_COUNT + 1) {
-    const char* extensions[] = {".img", ".tdsk"};
+  const char* items[] = {
+    "Mount disk image read/write",
+    "Mount disk image read-only",
+    "Eject disk",
+    "Disk information"};
+  int selection = popup_menu_select(renderer, title, items, 4, 0);
+  if ((selection == 0) || (selection == 1)) {
+    const char* extensions[] = {".img", ".tdsk", ".dsk", ".raw"};
     char file_name[PATH_MAX];
-    char geometry[64];
-    if (!popup_file_select(renderer, "Create TANDOS Disk", file_dialog_directory,
-                           extensions, 2, true, "new_disk.img", file_name, sizeof(file_name))) {
-      return;
+    if (popup_file_select(renderer, "Mount TANDOS Disk",
+                          file_dialog_directory, extensions, 4, false, "",
+                          file_name, sizeof(file_name))) {
+      update_file_dialog_directory(file_name, file_dialog_directory,
+                                   file_dialog_directory_size);
+      int rv = tandos_mount(unit, file_name, selection == 1);
+      if (rv == RV_OK) {
+        tandos_set_enabled(true);
+        popup_show(renderer, selection == 1
+          ? "Disk mounted read-only; TANDOS card enabled."
+          : "Disk mounted read/write; TANDOS card enabled.");
+      } else {
+        popup_show(renderer,
+                   "Mount failed. Use a single-sided 35-80 track, "
+                   "9 or 10 sector, 256-byte raw image.");
+      }
     }
-    update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
-    if (!popup_prompt_input(renderer, "Create TANDOS Disk",
-                            "Tracks,sectors per track (35-80, 9 or 10)",
-                            "80,10", geometry, sizeof(geometry))) {
-      return;
-    }
-
-    int tracks;
-    int sectors;
-    if ((sscanf(geometry, "%d,%d", &tracks, &sectors) != 2) ||
-        (tandos_create_image(file_name, tracks, sectors) != RV_OK)) {
-      popup_show(renderer, "Unable to create disk. Example geometry: 80,10");
+  } else if (selection == 2) {
+    tandos_eject(unit);
+  } else if (selection == 3) {
+    char information[PATH_MAX + 160];
+    if (tandos_unit_mounted(unit)) {
+      snprintf(information, sizeof(information),
+               "Drive %d:\n%s\n%d tracks, %d sectors/track\n%s",
+               unit, tandos_unit_file_name(unit), tandos_unit_tracks(unit),
+               tandos_unit_sectors_per_track(unit),
+               tandos_unit_write_protected(unit) ? "Read-only" : "Read/write");
     } else {
-      popup_show(renderer, "Blank formatted disk image created.");
+      snprintf(information, sizeof(information), "Drive %d: empty", unit);
     }
-  } else if (selection == TANDOS_UNIT_COUNT + 2) {
-    tandos_eject_all();
-    popup_show(renderer, "All TANDOS disks ejected.");
+    popup_show(renderer, information);
   }
 }
-static void show_main_menu(SDL_Renderer* renderer, bool* display_overwritten, int* cpu_clock_frequency, char* file_dialog_directory, size_t file_dialog_directory_size) {
-  const char* menu_items[] = {
-    "Reset system",
-    "Select hex keypad input",
-    "Select ASCII keyboard input",
-    "Load program file (.m65/.hex/.ihx/.ihex)",
-    "Save snapshot (.m65)",
-    "Save Intel HEX address range",
-    "Disks",
-    "Display options",
-    "CPU clock options",
-    "Help",
-    "Cancel"};
 
-  int selection = popup_menu_select(renderer, "Microtan Menu", menu_items, 11, 0);
+static void create_blank_disk(SDL_Renderer* renderer,
+                              char* file_dialog_directory,
+                              size_t file_dialog_directory_size) {
+  const char* extensions[] = {".img", ".tdsk"};
   char file_name[PATH_MAX];
-  char range_input[128];
-  int rv;
+  char geometry[64];
+  if (!popup_file_select(renderer, "Create TANDOS Disk",
+                         file_dialog_directory, extensions, 2, true,
+                         "new_disk.img", file_name, sizeof(file_name))) {
+    return;
+  }
+  update_file_dialog_directory(file_name, file_dialog_directory,
+                               file_dialog_directory_size);
+  if (!popup_prompt_input(renderer, "Create TANDOS Disk",
+                          "Tracks,sectors per track (35-80, 9 or 10)",
+                          "80,10", geometry, sizeof(geometry))) {
+    return;
+  }
 
-  switch (selection) {
-    case 0:
-      system_reset();
-      popup_show(renderer, "System reset.");
-      break;
+  int tracks;
+  int sectors;
+  if ((sscanf(geometry, "%d,%d", &tracks, &sectors) != 2) ||
+      (tandos_create_image(file_name, tracks, sectors) != RV_OK)) {
+    popup_show(renderer, "Unable to create disk. Example geometry: 80,10");
+  } else {
+    popup_show(renderer,
+               "Blank disk image created. Use TANDOS INIT before saving files.");
+  }
+}
 
-    case 1:
-      keyboard_use_hex_keypad(true);
-      popup_show(renderer, "Hex keypad input selected.");
-      break;
+static void execute_application_menu_command(
+  SDL_Renderer* renderer, int command, bool* is_running,
+  bool* display_overwritten, int* cpu_clock_frequency,
+  char* file_dialog_directory, size_t file_dialog_directory_size) {
+  if ((command >= MENU_COMMAND_DISK_UNIT_0) &&
+      (command <= MENU_COMMAND_DISK_UNIT_7)) {
+    show_disk_unit_menu(renderer, command - MENU_COMMAND_DISK_UNIT_0,
+                        file_dialog_directory, file_dialog_directory_size);
+    *display_overwritten = true;
+    return;
+  }
 
-    case 2:
-      keyboard_use_hex_keypad(false);
-      popup_show(renderer, "ASCII keyboard input selected.");
-      break;
+  if ((command >= MENU_COMMAND_DISPLAY_TEXT) &&
+      (command <= MENU_COMMAND_DISPLAY_COLOUR_VDU)) {
+    display_hires_mode_t mode = (display_hires_mode_t)(
+      command - MENU_COMMAND_DISPLAY_TEXT);
+    if ((mode != DISPLAY_HIRES_MODE_COLOUR_VDU) ||
+        colour_vdu_get_enabled()) {
+      display_set_hires_mode(mode);
+    }
+    *display_overwritten = true;
+    return;
+  }
 
-    case 3: {
-      const char* load_extensions[] = {".m65", ".hex", ".ihx", ".ihex"};
-
-      if (popup_file_select(renderer, "Load Program", file_dialog_directory, load_extensions, 4, false, "", file_name, sizeof(file_name))) {
-        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
-        // Match startup load behavior: reset hardware state before loading a program file.
+  switch (command) {
+    case MENU_COMMAND_LOAD_PROGRAM: {
+      const char* extensions[] = {".m65", ".hex", ".ihx", ".ihex"};
+      char file_name[PATH_MAX];
+      if (popup_file_select(renderer, "Load Program", file_dialog_directory,
+                            extensions, 4, false, "", file_name,
+                            sizeof(file_name))) {
+        update_file_dialog_directory(file_name, file_dialog_directory,
+                                     file_dialog_directory_size);
         system_reset();
-        rv = system_load_program_file(file_name);
+        int rv = system_load_program_file(file_name);
         if ((rv == RV_OK) && (strstr(file_name, "berzerk") != NULL)) {
           keyboard_use_hex_keypad(true);
         }
-        if (rv == RV_OK) {
-          popup_show(renderer, "Program loaded.");
-        } else {
-          popup_show(renderer, "Load failed. See terminal output for details.");
-        }
+        popup_show(renderer, rv == RV_OK
+          ? "Program loaded."
+          : "Load failed. See terminal output for details.");
       }
       break;
     }
 
-    case 4: {
-      const char* m65_extensions[] = {".m65"};
-
-      if (popup_file_select(renderer, "Save Snapshot", file_dialog_directory, m65_extensions, 1, true, "snapshot.m65", file_name, sizeof(file_name))) {
-        update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
-        rv = system_save_m65_file(file_name);
-        if (rv == RV_OK) {
-          popup_show(renderer, "Snapshot saved.");
-        } else {
-          popup_show(renderer, "Save failed. See terminal output for details.");
-        }
+    case MENU_COMMAND_SAVE_SNAPSHOT: {
+      const char* extensions[] = {".m65"};
+      char file_name[PATH_MAX];
+      if (popup_file_select(renderer, "Save Snapshot", file_dialog_directory,
+                            extensions, 1, true, "snapshot.m65", file_name,
+                            sizeof(file_name))) {
+        update_file_dialog_directory(file_name, file_dialog_directory,
+                                     file_dialog_directory_size);
+        int rv = system_save_m65_file(file_name);
+        popup_show(renderer, rv == RV_OK
+          ? "Snapshot saved."
+          : "Save failed. See terminal output for details.");
       }
       break;
     }
 
-    case 5: {
+    case MENU_COMMAND_EXPORT_HEX: {
+      const char* extensions[] = {".hex", ".ihx", ".ihex"};
+      char file_name[PATH_MAX];
+      char range_input[128];
+      if (!popup_file_select(renderer, "Save Intel HEX",
+                             file_dialog_directory, extensions, 3, true,
+                             "range.hex", file_name, sizeof(file_name))) {
+        break;
+      }
+      update_file_dialog_directory(file_name, file_dialog_directory,
+                                   file_dialog_directory_size);
+      if (!popup_prompt_input(renderer, "Save Intel HEX",
+                              "Address range start-end (hex)", "0200-03FF",
+                              range_input, sizeof(range_input))) {
+        break;
+      }
       uint16_t start_address;
       uint16_t end_address;
-      const char* hex_extensions[] = {".hex", ".ihx", ".ihex"};
-
-      if (!popup_file_select(renderer, "Save Intel HEX", file_dialog_directory, hex_extensions, 3, true, "range.hex", file_name, sizeof(file_name))) {
-        break;
-      }
-      update_file_dialog_directory(file_name, file_dialog_directory, file_dialog_directory_size);
-
-      if (!popup_prompt_input(renderer, "Save Intel HEX", "Address range start-end (hex)", "0200-03FF", range_input, sizeof(range_input))) {
-        break;
-      }
-
       if (!parse_hex_range(range_input, &start_address, &end_address)) {
         popup_show(renderer, "Invalid range. Example: 0200-03FF");
         break;
       }
-
-      rv = system_save_intel_hex_range(file_name, start_address, end_address);
-      if (rv == RV_OK) {
-        popup_show(renderer, "Intel HEX saved.");
-      } else {
-        popup_show(renderer, "Save failed. See terminal output for details.");
-      }
+      int rv = system_save_intel_hex_range(file_name, start_address,
+                                            end_address);
+      popup_show(renderer, rv == RV_OK
+        ? "Intel HEX saved."
+        : "Save failed. See terminal output for details.");
       break;
     }
-    case 6:
-      show_disks_menu(renderer, file_dialog_directory, file_dialog_directory_size);
+
+    case MENU_COMMAND_QUIT:
+      *is_running = false;
       break;
 
-    case 7: {
-      const char* display_items[] = {
-        "Text/chunky only",
-        "Tangerine hi-res (RGBI)",
-        "GPU display mode",
-        "Mousepacket Colour VDU output",
-        colour_vdu_get_enabled() ? "Disable Colour VDU card" : "Enable Colour VDU card",
-        "Cancel"};
-      int current_mode = (int)display_get_hires_mode();
-      if (current_mode < 0 || current_mode > 3) {
-        current_mode = 0;
-      }
+    case MENU_COMMAND_RESET:
+      system_reset();
+      break;
 
-      int display_selection = popup_menu_select(renderer, "Display Options", display_items, 6, current_mode);
-      if (display_selection >= 0 && display_selection <= 3) {
-        if ((display_selection == DISPLAY_HIRES_MODE_COLOUR_VDU) &&
-            !colour_vdu_get_enabled()) {
-          popup_show(renderer, "Enable the Colour VDU card before selecting its output.");
-          break;
-        }
-        display_set_hires_mode((display_hires_mode_t)display_selection);
-        char message[96];
-        snprintf(message, sizeof(message), "Display mode: %s", display_mode_name(display_get_hires_mode()));
-        popup_show(renderer, message);
-      } else if (display_selection == 4) {
-        bool enabled = !colour_vdu_get_enabled();
-        colour_vdu_set_enabled(enabled);
-        if (!enabled &&
-            (display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU)) {
-          display_set_hires_mode(DISPLAY_HIRES_MODE_NONE);
-        }
-        popup_show(renderer, enabled
-          ? "Colour VDU enabled. TANBUG Ctrl-X will switch the displayed output."
-          : "Colour VDU card disabled; $A000-$A7FF is ordinary RAM.");
+    case MENU_COMMAND_CLOCK_750KHZ:
+    case MENU_COMMAND_CLOCK_1_5MHZ:
+    case MENU_COMMAND_CLOCK_3MHZ:
+    case MENU_COMMAND_CLOCK_6MHZ:
+      *cpu_clock_frequency = MICROTAN_CLOCK_OPTIONS[
+        command - MENU_COMMAND_CLOCK_750KHZ];
+      break;
+
+    case MENU_COMMAND_TANDOS_TOGGLE:
+      tandos_set_enabled(!tandos_get_enabled());
+      break;
+
+    case MENU_COMMAND_DISK_CREATE:
+      create_blank_disk(renderer, file_dialog_directory,
+                        file_dialog_directory_size);
+      break;
+
+    case MENU_COMMAND_DISK_EJECT_ALL:
+      tandos_eject_all();
+      break;
+
+    case MENU_COMMAND_COLOUR_VDU_TOGGLE: {
+      bool enabled = !colour_vdu_get_enabled();
+      colour_vdu_set_enabled(enabled);
+      if (!enabled &&
+          (display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU)) {
+        display_set_hires_mode(DISPLAY_HIRES_MODE_NONE);
       }
       break;
     }
 
-    case 8: {
-      const char* clock_items[] = {
-        "750 kHz (original)",
-        "1.5 MHz",
-        "3 MHz",
-        "6 MHz",
-        "Cancel"};
-      int current_index = clock_frequency_to_menu_index(*cpu_clock_frequency);
-      int clock_selection = popup_menu_select(renderer, "CPU Clock", clock_items, 5, current_index);
-
-      if ((clock_selection >= 0) && (clock_selection < MICROTAN_CLOCK_OPTION_COUNT)) {
-        *cpu_clock_frequency = MICROTAN_CLOCK_OPTIONS[clock_selection];
-        char message[96];
-        snprintf(message, sizeof(message), "CPU clock: %s", clock_frequency_name(*cpu_clock_frequency));
-        popup_show(renderer, message);
-      }
+    case MENU_COMMAND_INPUT_ASCII:
+      keyboard_use_hex_keypad(false);
       break;
-    }
 
-    case 9:
+    case MENU_COMMAND_INPUT_HEX:
+      keyboard_use_hex_keypad(true);
+      break;
+
+    case MENU_COMMAND_HELP:
       popup_show(renderer,
-                 "F1: Open menu\n"
-                 "Menu has reset/input/load/save actions\n"
-                 "Menu -> Disks: TANDOS card and units 0-7\n"
-                 "Menu -> Display options: Text/Tangerine/GPU/Colour VDU\n"
-                 "With Colour VDU enabled, TANBUG Ctrl-X follows its output\n"
-                 "Menu -> CPU clock options: 750k/1.5M/3M/6M\n"
+                 "Menu bar: mouse, arrows, Enter and Escape\n"
+                 "F1: Open or close the File menu\n"
                  "F2: Select hex keypad input\n"
                  "F3: Select ASCII keyboard input\n"
-                 "F5: Reset system\n");
+                 "F5: Reset system\n"
+                 "Ctrl+A to Ctrl+Z: send control characters\n"
+                 "Backspace: send Microtan delete");
       break;
 
     default:
       break;
   }
-
   *display_overwritten = true;
 }
-
 int main(int argc, char* argv[]) {
   if (system_initialise() != RV_OK) {
     return 0;
@@ -691,6 +755,18 @@ int main(int argc, char* argv[]) {
     SDL_Quit();
     return 1;
   }
+  menu_bar_state_t menu_bar;
+  if (!menu_bar_initialise(&menu_bar)) {
+    fprintf(stderr, "Unable to initialise menu bar.\n");
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    system_close();
+    SDL_Quit();
+    return 1;
+  }
+  application_menu_model_t menu_model;
+  build_application_menu(&menu_model, cpu_clock_frequency);
+
   int render_width;
   int render_height;
   display_get_render_size(&render_width, &render_height);
@@ -715,6 +791,8 @@ int main(int argc, char* argv[]) {
         : DISPLAY_HIRES_MODE_NONE);
       display_overwritten = true;
     }
+
+    build_application_menu(&menu_model, cpu_clock_frequency);
 
     // If the display has been updated, re-render the window
     bool colour_vdu_updated = colour_vdu_updated_event();
@@ -742,13 +820,29 @@ int main(int argc, char* argv[]) {
       SDL_UpdateTexture(texture, NULL, pixels, render_width * sizeof(Uint32));
       SDL_RenderClear(renderer);
       SDL_GetWindowSize(window, &width, &height);
-      SDL_Rect dest_rect = {0, 0, width, height};
+      SDL_Rect dest_rect = {0, MENU_BAR_HEIGHT, width,
+                            height - MENU_BAR_HEIGHT};
       SDL_RenderCopy(renderer, texture, NULL, &dest_rect);
-      SDL_RenderCopy(renderer, scanlines, NULL, NULL);
+      SDL_RenderCopy(renderer, scanlines, NULL, &dest_rect);
+      menu_bar_render(renderer, &menu_bar, menu_model.menus, 6);
       SDL_RenderPresent(renderer);
     }
 
     while (SDL_PollEvent(&event)) {
+      int menu_command = MENU_BAR_SEPARATOR_COMMAND;
+      if (menu_bar_handle_event(&menu_bar, renderer, &event,
+                                menu_model.menus, 6, &menu_command)) {
+        display_overwritten = true;
+        if (menu_command != MENU_BAR_SEPARATOR_COMMAND) {
+          execute_application_menu_command(
+            renderer, menu_command, &is_running, &display_overwritten,
+            &cpu_clock_frequency, file_dialog_directory,
+            sizeof(file_dialog_directory));
+          build_application_menu(&menu_model, cpu_clock_frequency);
+        }
+        continue;
+      }
+
       switch (event.type) {
         case SDL_QUIT:
           is_running = false;
@@ -762,9 +856,11 @@ int main(int argc, char* argv[]) {
               SDL_RenderClear(renderer);
               int width, height;
               SDL_GetWindowSize(window, &width, &height);
-              SDL_Rect dest_rect = {0, 0, width, height};
+              SDL_Rect dest_rect = {0, MENU_BAR_HEIGHT, width,
+                                    height - MENU_BAR_HEIGHT};
               SDL_RenderCopy(renderer, texture, NULL, &dest_rect);
-              SDL_RenderCopy(renderer, scanlines, NULL, NULL);
+              SDL_RenderCopy(renderer, scanlines, NULL, &dest_rect);
+              menu_bar_render(renderer, &menu_bar, menu_model.menus, 6);
               SDL_RenderPresent(renderer);
               break;
             }
@@ -791,9 +887,7 @@ int main(int argc, char* argv[]) {
         case SDL_KEYDOWN: {
           SDL_KeyCode keycode = event.key.keysym.sym;
 
-          if (keycode == SDLK_F1) {
-            show_main_menu(renderer, &display_overwritten, &cpu_clock_frequency, file_dialog_directory, sizeof(file_dialog_directory));
-          } else if (keycode == SDLK_F2) {
+          if (keycode == SDLK_F2) {
             keyboard_use_hex_keypad(true);
           } else if (keycode == SDLK_F3) {
             keyboard_use_hex_keypad(false);
@@ -831,6 +925,7 @@ int main(int argc, char* argv[]) {
   } // main loop
 
   save_window_settings(window, cpu_clock_frequency, file_dialog_directory);
+  menu_bar_close(&menu_bar);
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);

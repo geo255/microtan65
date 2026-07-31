@@ -86,7 +86,7 @@ The Microtan TANBUG and BASIC are case sensitive and commands are all upper case
 
 The numeric keypad "ENTER" key is used as the "LINEFEED" key on the Microtan keyboard.
 
-F1 opens an in-app menu (reset/input/load/save/disks/help), F2 emulates the Tangerine Hex Keypad, F3 emulates the ASCII keyboard, and F5 resets the CPU.
+The persistent menu bar provides File, System, Disks, Display, Input, and Help menus. F1 opens or closes the File menu, F2 emulates the Tangerine Hex Keypad, F3 emulates the ASCII keyboard, and F5 resets the CPU.
 
 The `Disks` menu enables or disables the TANDOS card and hot-mounts raw disk
 images on logical units `0:` through `7:`. Images can be mounted read/write or
