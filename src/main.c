@@ -25,6 +25,7 @@
 #include "tandos.h"
 #include "via_6522.h"
 
+#define DISPLAY_SWITCH_REDRAW_FRAMES    10
 #define MICROTAN_DEFAULT_CLOCK_FREQUENCY 750000
 #define LOOP_EXECUTE_TIME_MS             20
 #define MICROTAN_CLOCK_OPTION_COUNT      4
@@ -574,7 +575,16 @@ static void execute_application_menu_command(
       command - MENU_COMMAND_DISPLAY_TEXT);
     if ((mode != DISPLAY_HIRES_MODE_COLOUR_VDU) ||
         colour_vdu_get_enabled()) {
-      display_set_hires_mode(mode);
+      bool is_tanbug_output =
+        (mode == DISPLAY_HIRES_MODE_NONE) ||
+        (mode == DISPLAY_HIRES_MODE_COLOUR_VDU);
+      bool wants_colour_vdu = mode == DISPLAY_HIRES_MODE_COLOUR_VDU;
+      if (is_tanbug_output && colour_vdu_get_enabled() &&
+          (colour_vdu_output_selected() != wants_colour_vdu)) {
+        keyboard_keypress(0x18);
+      } else {
+        display_set_hires_mode(mode);
+      }
     }
     *display_overwritten = true;
     return;
@@ -678,6 +688,9 @@ static void execute_application_menu_command(
 
     case MENU_COMMAND_COLOUR_VDU_TOGGLE: {
       bool enabled = !colour_vdu_get_enabled();
+      if (!enabled && colour_vdu_output_selected()) {
+        keyboard_keypress(0x18);
+      }
       colour_vdu_set_enabled(enabled);
       if (!enabled &&
           (display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU)) {
@@ -779,6 +792,7 @@ int main(int argc, char* argv[]) {
   struct timespec end_time;
   struct timespec sleep_time;
   bool display_overwritten = true;
+  int forced_redraw_frames = 0;
 
   while (is_running) {
     clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -790,6 +804,7 @@ int main(int argc, char* argv[]) {
         ? DISPLAY_HIRES_MODE_COLOUR_VDU
         : DISPLAY_HIRES_MODE_NONE);
       display_overwritten = true;
+      forced_redraw_frames = DISPLAY_SWITCH_REDRAW_FRAMES;
     }
 
     build_application_menu(&menu_model, cpu_clock_frequency);
@@ -798,6 +813,7 @@ int main(int argc, char* argv[]) {
     bool colour_vdu_updated = colour_vdu_updated_event();
     if ((display_updated_event()) ||
         ((display_get_hires_mode() == DISPLAY_HIRES_MODE_COLOUR_VDU) && colour_vdu_updated) ||
+        (forced_redraw_frames > 0) ||
         (display_overwritten)) {
       display_overwritten = false;
       int required_width;
@@ -815,6 +831,7 @@ int main(int argc, char* argv[]) {
 
         SDL_GetWindowSize(window, &width, &height);
         resize_window_to_integer_scale(window, height);
+        forced_redraw_frames = DISPLAY_SWITCH_REDRAW_FRAMES;
       }
       display_render(pixels);
       SDL_UpdateTexture(texture, NULL, pixels, render_width * sizeof(Uint32));
@@ -826,6 +843,9 @@ int main(int argc, char* argv[]) {
       SDL_RenderCopy(renderer, scanlines, NULL, &dest_rect);
       menu_bar_render(renderer, &menu_bar, menu_model.menus, 6);
       SDL_RenderPresent(renderer);
+      if (forced_redraw_frames > 0) {
+        forced_redraw_frames--;
+      }
     }
 
     while (SDL_PollEvent(&event)) {
@@ -850,6 +870,7 @@ int main(int argc, char* argv[]) {
 
         case SDL_WINDOWEVENT:
           switch (event.window.event) {
+            case SDL_WINDOWEVENT_SIZE_CHANGED:
             case SDL_WINDOWEVENT_RESIZED: {
               resize_window_to_integer_scale(window, event.window.data2);
 
@@ -862,6 +883,8 @@ int main(int argc, char* argv[]) {
               SDL_RenderCopy(renderer, scanlines, NULL, &dest_rect);
               menu_bar_render(renderer, &menu_bar, menu_model.menus, 6);
               SDL_RenderPresent(renderer);
+              display_overwritten = true;
+              forced_redraw_frames = DISPLAY_SWITCH_REDRAW_FRAMES;
               break;
             }
           }
