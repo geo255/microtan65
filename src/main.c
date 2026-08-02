@@ -45,6 +45,28 @@ static const int MICROTAN_CLOCK_OPTIONS[MICROTAN_CLOCK_OPTION_COUNT] = {
 
 static bool is_supported_clock_frequency(int clock_frequency);
 
+static bool environment_value_is_set(const char* name) {
+  const char* value = getenv(name);
+  return value && (*value != '\0');
+}
+
+static bool sdl_video_driver_available(const char* name) {
+  int driver_count = SDL_GetNumVideoDrivers();
+  for (int index = 0; index < driver_count; index++) {
+    const char* driver = SDL_GetVideoDriver(index);
+    if (driver && (strcmp(driver, name) == 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool desktop_uses_wayland(void) {
+  const char* session_type = getenv("XDG_SESSION_TYPE");
+  return environment_value_is_set("WAYLAND_DISPLAY") ||
+         (session_type && (strcmp(session_type, "wayland") == 0));
+}
+
 static bool directory_exists(const char* path) {
   struct stat st;
   return path && (*path != '\0') && (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
@@ -761,12 +783,48 @@ int main(int argc, char* argv[]) {
   }
   srand(time(NULL));
 
-  SDL_Init(SDL_INIT_VIDEO);
+  bool automatic_wayland = false;
+  if (!environment_value_is_set("SDL_VIDEODRIVER") &&
+      desktop_uses_wayland() && sdl_video_driver_available("wayland")) {
+    SDL_setenv("SDL_VIDEODRIVER", "wayland", 0);
+    automatic_wayland = true;
+  }
+
+  int video_initialise_result = SDL_Init(SDL_INIT_VIDEO);
+  if ((video_initialise_result != 0) && automatic_wayland) {
+    // If native Wayland cannot initialise, retry SDL's normal driver choice.
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    unsetenv("SDL_VIDEODRIVER");
+    automatic_wayland = false;
+    video_initialise_result = SDL_Init(SDL_INIT_VIDEO);
+  }
+  if (video_initialise_result != 0) {
+    fprintf(stderr, "Unable to initialise SDL video: %s\n", SDL_GetError());
+    system_close();
+    SDL_Quit();
+    return 1;
+  }
+
   integer_scaled_display_size(height, &width, &height);
   SDL_Window* window = SDL_CreateWindow("Microtan 65", x, y, width, height, SDL_WINDOW_RESIZABLE);
-  SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+  if (!window) {
+    fprintf(stderr, "Unable to create SDL window: %s\n", SDL_GetError());
+    system_close();
+    SDL_Quit();
+    return 1;
+  }
+
+  bool automatic_software = automatic_wayland &&
+                            !environment_value_is_set("SDL_RENDER_DRIVER");
+  Uint32 renderer_flags = automatic_software
+                        ? SDL_RENDERER_SOFTWARE
+                        : SDL_RENDERER_ACCELERATED;
+  SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renderer_flags);
   if (!renderer) {
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    Uint32 fallback_flags = automatic_software
+                          ? SDL_RENDERER_ACCELERATED
+                          : SDL_RENDERER_SOFTWARE;
+    renderer = SDL_CreateRenderer(window, -1, fallback_flags);
   }
   if (!renderer) {
     fprintf(stderr, "Unable to create SDL renderer: %s\n", SDL_GetError());

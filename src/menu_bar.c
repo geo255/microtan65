@@ -15,9 +15,9 @@
 
 static const SDL_Color MENU_TEXT = {25, 30, 28, 255};
 static const SDL_Color MENU_DISABLED = {125, 125, 118, 255};
-static const SDL_Color MENU_BAR_BACKGROUND = {222, 217, 201, 255};
-static const SDL_Color MENU_DROP_BACKGROUND = {246, 242, 229, 255};
-static const SDL_Color MENU_HIGHLIGHT = {24, 102, 101, 255};
+static const SDL_Color MENU_BAR_BACKGROUND = {242, 133, 0, 255};
+static const SDL_Color MENU_DROP_BACKGROUND = {255, 180, 64, 255};
+static const SDL_Color MENU_HIGHLIGHT = {166, 74, 0, 255};
 static const SDL_Color MENU_HIGHLIGHT_TEXT = {255, 255, 245, 255};
 static const SDL_Color MENU_BORDER = {55, 61, 57, 255};
 
