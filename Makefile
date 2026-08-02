@@ -75,6 +75,11 @@ test-tandos: | $(BUILD_DIR)
 >  tests/tandos_test.c src/tandos.c -o $(BUILD_DIR)/tandos_test
 >./$(BUILD_DIR)/tandos_test
 
+test-rtc: | $(BUILD_DIR)
+>$(CC) $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) \
+>  tests/rtc_test.c src/rtc.c -o $(BUILD_DIR)/rtc_test
+>./$(BUILD_DIR)/rtc_test
+
 test-keyboard: | $(BUILD_DIR)
 >$(CC) $(BASE_CFLAGS) $(WARN_CFLAGS) $(DEBUG_CFLAGS) \
 >  tests/keyboard_test.c src/keyboard.c -o $(BUILD_DIR)/keyboard_test
@@ -89,7 +94,7 @@ lint:
 clean:
 >$(RM) $(OBJECTS) $(TARGET) $(TARGET).exe
 
-.PHONY: all release debug sanitize run smoke test-tandos test-keyboard format lint clean
+.PHONY: all release debug sanitize run smoke test-tandos test-rtc test-keyboard format lint clean
 
 
 

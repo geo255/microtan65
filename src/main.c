@@ -21,6 +21,7 @@
 #include "keyboard.h"
 #include "menu_bar.h"
 #include "popup.h"
+#include "rtc.h"
 #include "system.h"
 #include "tandos.h"
 #include "via_6522.h"
@@ -116,10 +117,10 @@ void save_window_settings(SDL_Window* window, int cpu_clock_frequency, const cha
 
   if (file) {
     const char* save_directory = (file_dialog_directory && (*file_dialog_directory != '\0')) ? file_dialog_directory : ".";
-    fprintf(file, "%d %d %d %d %d %d %d\n%s\n",
+    fprintf(file, "%d %d %d %d %d %d %d %lld\n%s\n",
             x, y, width, height, (int)display_get_hires_mode(),
             cpu_clock_frequency, colour_vdu_get_enabled() ? 1 : 0,
-            save_directory);
+            (long long)rtc_get_offset_seconds(), save_directory);
     tandos_save_settings(file);
     fclose(file);
   }
@@ -137,17 +138,20 @@ void load_window_settings(int* x, int* y, int* width, int* height,
   *cpu_clock_frequency = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
   *colour_vdu_enabled = false;
   choose_default_file_directory(file_dialog_directory, file_dialog_directory_size);
+  rtc_set_offset_seconds(0);
 
   if (file) {
     int display_mode_raw = 0;
     int cpu_clock_frequency_raw = MICROTAN_DEFAULT_CLOCK_FREQUENCY;
     int colour_vdu_enabled_raw = 0;
+    long long rtc_offset_seconds_raw = 0;
     int values_read = 0;
 
     if (fgets(geometry_line, sizeof(geometry_line), file) != NULL) {
-      values_read = sscanf(geometry_line, "%d %d %d %d %d %d %d",
+      values_read = sscanf(geometry_line, "%d %d %d %d %d %d %d %lld",
                            x, y, width, height, &display_mode_raw,
-                           &cpu_clock_frequency_raw, &colour_vdu_enabled_raw);
+                           &cpu_clock_frequency_raw, &colour_vdu_enabled_raw,
+                           &rtc_offset_seconds_raw);
     }
 
     if (values_read < 4) {
@@ -164,6 +168,9 @@ void load_window_settings(int* x, int* y, int* width, int* height,
     }
     if (values_read >= 7) {
       *colour_vdu_enabled = colour_vdu_enabled_raw != 0;
+    }
+    if (values_read >= 8) {
+      rtc_set_offset_seconds((int64_t)rtc_offset_seconds_raw);
     }
 
     // Optional persisted file-dialog directory line.

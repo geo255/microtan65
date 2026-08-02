@@ -4,6 +4,7 @@
 #include "cpu_6502.h"
 #include "display.h"
 #include "function_return_codes.h"
+#include "rtc.h"
 #include "system.h"
 #include "tandos.h"
 #include "via_6522.h"
@@ -1427,6 +1428,8 @@ void irq() {
 /* Execute a number of instructions */
 void cpu_6502_execute(int timer_ticks) {
   uint32_t cpu_ticks;
+
+  rtc_update();
 
   while (timer_ticks > 0) {
     opcode = system_read_memory(reg_pc++);

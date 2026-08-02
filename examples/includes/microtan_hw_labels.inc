@@ -185,6 +185,34 @@
 .equ AY_REG_PORT_B,     $0F
 
 ; ---------------------------------------------------------------------------
+; ETI real-time clock/calendar ($BC30-$BC3F)
+; ---------------------------------------------------------------------------
+.equ RTC_TEST,            $BC30
+.equ RTC_TENTHS,          $BC31
+.equ RTC_SECONDS_UNITS,   $BC32
+.equ RTC_SECONDS_TENS,    $BC33
+.equ RTC_MINUTES_UNITS,   $BC34
+.equ RTC_MINUTES_TENS,    $BC35
+.equ RTC_HOURS_UNITS,     $BC36
+.equ RTC_HOURS_TENS,      $BC37
+.equ RTC_DAY_UNITS,       $BC38
+.equ RTC_DAY_TENS,        $BC39
+.equ RTC_WEEKDAY,         $BC3A
+.equ RTC_MONTH_UNITS,     $BC3B
+.equ RTC_MONTH_TENS,      $BC3C
+.equ RTC_YEAR_STATUS,     $BC3D
+.equ RTC_START_STOP,      $BC3E
+.equ RTC_INTERRUPT,       $BC3F
+
+.equ RTC_INTERRUPTS_OFF,  $00
+.equ RTC_IRQ_ONCE_60S,    $04
+.equ RTC_IRQ_REPEAT_60S,  $0C
+.equ RTC_IRQ_ONCE_5S,     $02
+.equ RTC_IRQ_REPEAT_5S,   $0A
+.equ RTC_IRQ_ONCE_HALF_S, $01
+.equ RTC_IRQ_REPEAT_HALF, $09
+
+; ---------------------------------------------------------------------------
 ; 6522 VIA register offsets
 ; ---------------------------------------------------------------------------
 .equ VIA_ORB,   $00

@@ -1,5 +1,5 @@
 ; hw_labels_demo.s
-; Demonstrates AY8910 + VIA label include usage.
+; Demonstrates AY8910 + VIA + RTC label include usage.
 
 .include "../includes/microtan_hw_labels.inc"
 
@@ -20,6 +20,9 @@ Start:
     sta AY8_ADDR
     lda #$0F
     sta AY8_DATA
+
+    ; Read an RTC digit register.
+    lda RTC_MINUTES_UNITS
 
     ; Use a VIA2 timer register label.
     lda #$12

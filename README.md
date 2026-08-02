@@ -16,11 +16,14 @@ Emulates a Microtan 65 system with the following specifications:
 - 4x Tangerine Hi_res boards, providing RGBI at 256x256
 - Prototype "GPU" graphics board - in development
 - Optional TANDOS disk controller with eight logical drives and raw disk images
+- ETI real-time clock/calendar at `$BC30-$BC3F`, backed by host time plus a persistent offset
 - My .m65 snapshot format and Intel HEX program loading
 
 GPU register documentation: `docs/GPU_REGISTER_SPEC.md`
 
 TANDOS controller and disk-image documentation: `docs/TANDOS.md`
+
+ETI real-time clock documentation: `docs/RTC.md`
 
 ## FIRMWARE:
 
